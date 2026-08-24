@@ -1,4 +1,4 @@
-const CACHE = 'tend-v1';
+const CACHE = 'tend-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -25,12 +25,9 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      const network = fetch(e.request).then(resp => {
-        if (resp.ok) caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
-        return resp;
-      }).catch(() => cached);
-      return cached || network;
-    })
+    fetch(e.request).then(resp => {
+      if (resp.ok) caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
+      return resp;
+    }).catch(() => caches.match(e.request))
   );
 });

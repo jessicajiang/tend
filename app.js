@@ -63,6 +63,9 @@ function formatDateHuman(s) {
 // ---------- recurrence status ----------
 function getStatus(task) {
   const today = todayStr();
+  if (task.type === 'freeform') {
+    return { due: false, next: null };
+  }
   if (task.type === 'fixed') {
     const recent = mostRecentScheduled(task.weekdays, today);
     const last = task.completions.length ? task.completions[task.completions.length - 1] : null;
@@ -80,6 +83,7 @@ function getStatus(task) {
 }
 
 function scheduleLabel(task) {
+  if (task.type === 'freeform') return 'As needed';
   if (task.type === 'fixed') {
     if (task.weekdays.length === 7) return 'Every day';
     return 'Every ' + task.weekdays.map(w => WEEKDAY_NAMES[w]).join(', ');
@@ -90,6 +94,10 @@ function scheduleLabel(task) {
 }
 
 function metaLabel(task, status) {
+  if (task.type === 'freeform') {
+    if (!task.completions.length) return 'Not logged yet';
+    return `Last ${formatDateHuman(task.completions[task.completions.length - 1])}`;
+  }
   if (status.due) {
     if (status.overdueDays > 0) return `${status.overdueDays}d overdue`;
     return 'Due today';
@@ -287,7 +295,7 @@ function renderAll() {
   }
   const rows = state.tasks
     .map(t => ({ t, status: getStatus(t) }))
-    .sort((a, b) => a.status.next.localeCompare(b.status.next));
+    .sort((a, b) => (a.status.next || '9999-99-99').localeCompare(b.status.next || '9999-99-99'));
   rows.forEach(({ t, status }) => viewEl.appendChild(taskCard(t, status)));
 }
 
@@ -377,9 +385,10 @@ function openForm(taskId) {
         <label>Emoji</label>
         <input type="text" id="f-emoji" maxlength="4" placeholder="auto" value="${editing ? escapeAttr(editing.emoji || '') : ''}">
       </div>
-      <div class="field" style="flex:2">
+      <div class="field" style="flex:2; position:relative">
         <label>Tags (comma separated)</label>
-        <input type="text" id="f-tags" placeholder="home, health" value="${editing ? escapeAttr(editing.tags.join(', ')) : ''}">
+        <input type="text" id="f-tags" autocomplete="off" placeholder="home, health" value="${editing ? escapeAttr(editing.tags.join(', ')) : ''}">
+        <div class="tag-suggest" id="f-tag-suggest"></div>
       </div>
     </div>
     <div class="field">
@@ -387,6 +396,7 @@ function openForm(taskId) {
       <div class="seg" id="f-type">
         <button type="button" data-val="floating" class="${type === 'floating' ? 'active' : ''}">Floating</button>
         <button type="button" data-val="fixed" class="${type === 'fixed' ? 'active' : ''}">Fixed days</button>
+        <button type="button" data-val="freeform" class="${type === 'freeform' ? 'active' : ''}">As needed</button>
       </div>
     </div>
     <div id="f-floating" class="field" style="${type === 'floating' ? '' : 'display:none'}">
@@ -400,6 +410,9 @@ function openForm(taskId) {
         </select>
       </div>
       <p style="font-size:12px;opacity:0.6;font-weight:600;margin-top:6px">Next due date is based on when you last completed it.</p>
+    </div>
+    <div id="f-freeform" class="field" style="${type === 'freeform' ? '' : 'display:none'}">
+      <p style="font-size:12px;opacity:0.6;font-weight:600;margin:0">No due date and no reminders — it just sits in "All" and logs each time you mark it done. Useful for things like crafts that you want to track but don't do on a real schedule.</p>
     </div>
     <div id="f-fixed" class="field" style="${type === 'fixed' ? '' : 'display:none'}">
       <label>Repeats on</label>
@@ -419,6 +432,7 @@ function openForm(taskId) {
     b.classList.add('active');
     document.getElementById('f-floating').style.display = b.dataset.val === 'floating' ? '' : 'none';
     document.getElementById('f-fixed').style.display = b.dataset.val === 'fixed' ? '' : 'none';
+    document.getElementById('f-freeform').style.display = b.dataset.val === 'freeform' ? '' : 'none';
   });
 
   document.getElementById('f-weekdays').addEventListener('click', (e) => {
@@ -426,6 +440,8 @@ function openForm(taskId) {
     if (!b) return;
     b.classList.toggle('active');
   });
+
+  setupTagAutocomplete();
 
   document.getElementById('f-save').addEventListener('click', () => {
     const title = document.getElementById('f-title').value.trim();
@@ -471,6 +487,49 @@ function escapeAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+// ---------- tag autocomplete ----------
+function allExistingTags() {
+  const set = new Set();
+  state.tasks.forEach(t => t.tags.forEach(tag => set.add(tag)));
+  return Array.from(set).sort();
+}
+
+function setupTagAutocomplete() {
+  const input = document.getElementById('f-tags');
+  const box = document.getElementById('f-tag-suggest');
+
+  function currentSegment() {
+    const parts = input.value.split(',');
+    return parts[parts.length - 1].trim().toLowerCase();
+  }
+
+  function render() {
+    const seg = currentSegment();
+    if (!seg) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    const already = new Set(input.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+    const matches = allExistingTags().filter(t => t.startsWith(seg) && !already.has(t)).slice(0, 6);
+    if (!matches.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.innerHTML = matches.map(t => `<button type="button" class="tag-suggest-item" data-tag="${escapeAttr(t)}">${t}</button>`).join('');
+    box.style.display = 'block';
+  }
+
+  input.addEventListener('input', render);
+  input.addEventListener('focus', render);
+  input.addEventListener('blur', () => setTimeout(() => { box.style.display = 'none'; }, 150));
+
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('.tag-suggest-item');
+    if (!b) return;
+    const parts = input.value.split(',');
+    parts.pop();
+    const prefix = parts.map(s => s.trim()).filter(Boolean);
+    prefix.push(b.dataset.tag);
+    input.value = prefix.join(', ') + ', ';
+    input.focus();
+    render();
+  });
+}
+
 function openDetail(taskId) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
@@ -485,7 +544,7 @@ function openDetail(taskId) {
     ${t.tags.length ? `<div class="tag-row">${t.tags.map(tag => `<span class="tag-chip" style="background:${colorFor(tag)}">${tag}</span>`).join('')}</div>` : ''}
     <div class="detail-stat-row">
       <div class="stat-box"><div class="num">${t.completions.length ? formatDateHuman(t.completions[t.completions.length - 1]) : '—'}</div><div class="lab">Last done</div></div>
-      <div class="stat-box"><div class="num">${scheduleLabel(t)}</div><div class="lab">Target</div></div>
+      <div class="stat-box"><div class="num">${scheduleLabel(t)}</div><div class="lab">Schedule</div></div>
       <div class="stat-box"><div class="num">${avg !== null ? avg + 'd' : '—'}</div><div class="lab">Actual avg</div></div>
     </div>
     <button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>

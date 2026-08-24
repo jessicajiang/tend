@@ -47,15 +47,6 @@ body {
   text-shadow: 2px 2px 0 var(--ink);
 }
 
-.brand-sub {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--ink);
-  opacity: 0.6;
-}
-
 .tabs {
   display: flex;
   gap: 10px;

@@ -97,6 +97,64 @@ function metaLabel(task, status) {
   return `Next ${formatDateHuman(status.next)}`;
 }
 
+// ---------- auto emoji ----------
+const EMOJI_RULES = [
+  [['plant', 'water the', 'garden'], '🪴'],
+  [['trash', 'garbage', 'recycl'], '🗑️'],
+  [['dish'], '🍽️'],
+  [['laundry', 'wash cloth'], '🧺'],
+  [['vacuum', 'sweep', 'mop', 'dust'], '🧹'],
+  [['toilet', 'bathroom'], '🚽'],
+  [['shower'], '🚿'],
+  [['gym', 'workout', 'exercise', 'lift'], '🏋️'],
+  [['run', 'jog'], '🏃'],
+  [['yoga', 'stretch'], '🧘'],
+  [['meditat'], '🧘'],
+  [['floss'], '🦷'],
+  [['brush teeth', 'teeth'], '🪥'],
+  [['journal', 'write', 'diary'], '📓'],
+  [['read', 'book'], '📖'],
+  [['japanese'], '🇯🇵'],
+  [['spanish'], '🇪🇸'],
+  [['french'], '🇫🇷'],
+  [['korean'], '🇰🇷'],
+  [['language', 'learn'], '🧠'],
+  [['code', 'coding', 'program'], '💻'],
+  [['guitar'], '🎸'],
+  [['piano'], '🎹'],
+  [['music', 'practice instrument'], '🎵'],
+  [['craft', 'knit', 'sew'], '🧶'],
+  [['draw', 'paint', 'art'], '🎨'],
+  [['cook', 'meal prep', 'recipe'], '🍳'],
+  [['groceries', 'grocery'], '🛒'],
+  [['bill', 'budget', 'financ', 'invoice'], '💳'],
+  [['car', 'oil change'], '🚗'],
+  [['dog', 'walk the'], '🐕'],
+  [['cat', 'litter'], '🐈'],
+  [['pet', 'feed'], '🐾'],
+  [['sleep', 'bed'], '🛏️'],
+  [['skincare', 'skin'], '🧴'],
+  [['vitamin', 'medicat', 'pill'], '💊'],
+  [['email', 'inbox'], '📧'],
+  [['call', 'phone'], '📞'],
+  [['clean'], '🧼'],
+];
+const EMOJI_FALLBACK = ['✅', '🔁', '📌', '🌀', '✨', '🟢', '🔔', '🧩'];
+
+function autoEmoji(title, tags) {
+  const haystack = (title + ' ' + tags.join(' ')).toLowerCase();
+  for (const [keywords, emoji] of EMOJI_RULES) {
+    if (keywords.some(k => haystack.includes(k))) return emoji;
+  }
+  return EMOJI_FALLBACK[Math.abs(hashStr(haystack)) % EMOJI_FALLBACK.length];
+}
+
+function hashStr(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return h;
+}
+
 // ---------- tag colors ----------
 const PALETTE = ['#FF6B6B', '#FFA94D', '#FFD43B', '#A9E34B', '#20C997', '#4DABF7', '#9775FA', '#F783AC'];
 function colorFor(str) {
@@ -317,7 +375,7 @@ function openForm(taskId) {
     <div class="row">
       <div class="field">
         <label>Emoji</label>
-        <input type="text" id="f-emoji" maxlength="4" placeholder="🪴" value="${editing ? escapeAttr(editing.emoji || '') : ''}">
+        <input type="text" id="f-emoji" maxlength="4" placeholder="auto" value="${editing ? escapeAttr(editing.emoji || '') : ''}">
       </div>
       <div class="field" style="flex:2">
         <label>Tags (comma separated)</label>
@@ -372,8 +430,8 @@ function openForm(taskId) {
   document.getElementById('f-save').addEventListener('click', () => {
     const title = document.getElementById('f-title').value.trim();
     if (!title) { document.getElementById('f-title').focus(); return; }
-    const emoji = document.getElementById('f-emoji').value.trim();
     const tags = document.getElementById('f-tags').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const emoji = document.getElementById('f-emoji').value.trim() || autoEmoji(title, tags);
     const selType = document.querySelector('#f-type button.active').dataset.val;
     const intervalValue = Math.max(1, parseInt(document.getElementById('f-interval-value').value, 10) || 1);
     const intervalUnit = document.getElementById('f-interval-unit').value;

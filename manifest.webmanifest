@@ -1,6 +1,6 @@
 {
-  "name": "Loop",
-  "short_name": "Loop",
+  "name": "Tend",
+  "short_name": "Tend",
   "description": "Chores and habits, tracked on your own schedule.",
   "start_url": "./index.html",
   "scope": "./",

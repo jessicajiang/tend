@@ -1,4 +1,4 @@
-const CACHE = 'loop-v1';
+const CACHE = 'tend-v1';
 const ASSETS = [
   './',
   './index.html',

@@ -511,4 +511,70 @@ function openDetail(taskId) {
   });
 }
 
+// ---------- export / import ----------
+async function exportData() {
+  const json = JSON.stringify(state.tasks, null, 2);
+  const filename = `tend-backup-${todayStr()}.json`;
+  const file = new File([json], filename, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let incoming;
+    try {
+      incoming = JSON.parse(reader.result);
+      if (!Array.isArray(incoming)) throw new Error('not an array');
+    } catch (e) {
+      alert('That file doesn\'t look like a Tend backup.');
+      return;
+    }
+    const existingIds = new Set(state.tasks.map(t => t.id));
+    let added = 0;
+    incoming.forEach(t => {
+      if (t && t.id && !existingIds.has(t.id)) {
+        state.tasks.push(t);
+        added++;
+      }
+    });
+    mutate(() => {});
+    alert(`Imported ${added} item(s). ${incoming.length - added} were already present and skipped.`);
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('settings-btn').addEventListener('click', () => {
+  openModal(`
+    <h2>Backup</h2>
+    <p style="font-size:14px;font-weight:600;opacity:0.7;margin-top:-8px">Everything is stored only on this device. Export a backup file occasionally, or move data between installs.</p>
+    <button class="btn-primary" id="s-export">Export data</button>
+    <button class="btn-danger" id="s-import" style="color:var(--ink)">Import data</button>
+  `);
+  document.getElementById('s-export').addEventListener('click', exportData);
+  document.getElementById('s-import').addEventListener('click', () => document.getElementById('import-file').click());
+});
+
+document.getElementById('import-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) importData(file);
+  e.target.value = '';
+  closeModal();
+});
+
 render();

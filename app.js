@@ -489,7 +489,7 @@ function openDetail(taskId) {
       <div class="stat-box"><div class="num">${avg !== null ? avg + 'd' : '—'}</div><div class="lab">Actual avg</div></div>
     </div>
     <button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>
-    <button class="btn-link" id="d-edit">Edit</button>
+    <button class="btn-secondary" id="d-edit">Edit</button>
     <p class="section-label" style="margin-top:16px">History (${t.completions.length})</p>
     <div class="history-list">
       ${completions.length ? completions.map(c => `

@@ -15,19 +15,7 @@ function saveTasks() {
 }
 
 function seedTasks() {
-  const today = todayStr();
-  return [
-    { id: uid(), title: 'Water the plants', emoji: '🪴', tags: ['home'], type: 'floating',
-      interval: { value: 14, unit: 'day' }, weekdays: [], completions: [], createdAt: today },
-    { id: uid(), title: 'Take out the trash', emoji: '🗑️', tags: ['home'], type: 'fixed',
-      interval: { value: 1, unit: 'week' }, weekdays: [1], completions: [], createdAt: today },
-    { id: uid(), title: 'Learn Japanese', emoji: '🇯🇵', tags: ['learning'], type: 'floating',
-      interval: { value: 1, unit: 'day' }, weekdays: [], completions: [], createdAt: today },
-    { id: uid(), title: 'Floss', emoji: '🦷', tags: ['health'], type: 'floating',
-      interval: { value: 1, unit: 'day' }, weekdays: [], completions: [], createdAt: today },
-    { id: uid(), title: 'Deep clean toilet', emoji: '🚽', tags: ['home', 'deep clean'], type: 'floating',
-      interval: { value: 6, unit: 'month' }, weekdays: [], completions: [], createdAt: today },
-  ];
+  return [];
 }
 
 function uid() {

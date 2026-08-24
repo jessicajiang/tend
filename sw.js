@@ -1,13 +1,13 @@
-const CACHE = 'tend-v2';
+const CACHE = 'tend-v3';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
   './manifest.webmanifest',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-180.png',
+  './icons/icon-192-v2.png',
+  './icons/icon-512-v2.png',
+  './icons/icon-180-v2.png',
 ];
 
 self.addEventListener('install', (e) => {

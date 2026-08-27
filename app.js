@@ -371,16 +371,19 @@ function tagCompletionCounts(tag) {
 function tagHeatmapHTML(tag, weeks) {
   const byDate = tagCompletionCounts(tag);
   const totalDays = weeks * 7;
+  const today = new Date();
   const start = new Date();
   start.setDate(start.getDate() - (totalDays - 1));
-  const pad = start.getDay();
+  const startPad = start.getDay();
+  const endPad = 6 - today.getDay();
   const cells = [];
-  for (let i = 0; i < pad; i++) cells.push(null);
+  for (let i = 0; i < startPad; i++) cells.push(null);
   for (let i = 0; i < totalDays; i++) {
     const d = new Date(start);
     d.setDate(d.getDate() + i);
     cells.push(toISODate(d));
   }
+  for (let i = 0; i < endPad; i++) cells.push(null);
   const color = colorFor(tag);
   return `<div class="heatmap" style="grid-template-rows: repeat(7, 1fr);">${cells.map(dateStr => {
     if (!dateStr) return '<div class="heatmap-cell heatmap-empty"></div>';

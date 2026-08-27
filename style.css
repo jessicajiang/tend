@@ -63,7 +63,11 @@ body {
   display: flex;
   gap: 10px;
   padding: 8px 20px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
+
+.tabs .tab { flex: none; }
 
 .tab {
   font-family: inherit;
@@ -467,7 +471,30 @@ main#view {
   background: #fff;
   box-shadow: var(--shadow);
   padding: 12px 16px;
+  cursor: pointer;
 }
+
+.stat-tag-row:active { transform: translate(2px, 2px); box-shadow: 3px 3px 0 var(--ink); }
+
+.heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 13px;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.heatmap-cell {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  background: #fff;
+  border: 2px solid var(--ink);
+}
+
+.heatmap-cell.heatmap-empty { border: none; background: transparent; }
 
 .stat-tag-row .name {
   font-weight: 800;

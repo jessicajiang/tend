@@ -221,6 +221,7 @@ const viewEl = document.getElementById('view');
 function render() {
   if (state.tab === 'due') renderDue();
   else if (state.tab === 'all') renderAll();
+  else if (state.tab === 'free') renderFree();
   else if (state.tab === 'stats') renderStats();
 }
 
@@ -289,14 +290,26 @@ function renderDue() {
 
 function renderAll() {
   viewEl.innerHTML = '';
-  if (!state.tasks.length) {
+  const scheduled = state.tasks.filter(t => t.type !== 'freeform');
+  if (!scheduled.length) {
     viewEl.appendChild(emptyState('Nothing here yet', 'Tap + to add a chore or habit.'));
     return;
   }
-  const rows = state.tasks
+  const rows = scheduled
     .map(t => ({ t, status: getStatus(t) }))
     .sort((a, b) => (a.status.next || '9999-99-99').localeCompare(b.status.next || '9999-99-99'));
   rows.forEach(({ t, status }) => viewEl.appendChild(taskCard(t, status)));
+}
+
+function renderFree() {
+  viewEl.innerHTML = '';
+  const freeform = state.tasks.filter(t => t.type === 'freeform');
+  if (!freeform.length) {
+    viewEl.appendChild(emptyState('Nothing here yet', 'Add something you do as-needed, like a hobby or craft.'));
+    return;
+  }
+  const rows = freeform.slice().sort((a, b) => a.title.localeCompare(b.title));
+  rows.forEach(t => viewEl.appendChild(taskCard(t, getStatus(t))));
 }
 
 function emptyState(title, sub) {
@@ -339,8 +352,61 @@ function renderStats() {
     row.className = 'stat-tag-row';
     row.innerHTML = `<span class="name">${tag}</span><span class="count">${count}×</span>`;
     row.style.borderLeftColor = colorFor(tag);
+    row.addEventListener('click', () => openTagDetail(tag));
     viewEl.appendChild(row);
   });
+}
+
+// ---------- tag detail (heatmap + ranking) ----------
+function tagCompletionCounts(tag) {
+  const byDate = {};
+  state.tasks.forEach(t => {
+    const tags = t.tags.length ? t.tags : ['untagged'];
+    if (!tags.includes(tag)) return;
+    t.completions.forEach(c => { byDate[c] = (byDate[c] || 0) + 1; });
+  });
+  return byDate;
+}
+
+function tagHeatmapHTML(tag, weeks) {
+  const byDate = tagCompletionCounts(tag);
+  const totalDays = weeks * 7;
+  const start = new Date();
+  start.setDate(start.getDate() - (totalDays - 1));
+  const pad = start.getDay();
+  const cells = [];
+  for (let i = 0; i < pad; i++) cells.push(null);
+  for (let i = 0; i < totalDays; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    cells.push(toISODate(d));
+  }
+  const color = colorFor(tag);
+  return `<div class="heatmap" style="grid-template-rows: repeat(7, 1fr);">${cells.map(dateStr => {
+    if (!dateStr) return '<div class="heatmap-cell heatmap-empty"></div>';
+    const n = byDate[dateStr] || 0;
+    const opacity = n === 0 ? 0 : n === 1 ? 0.4 : n === 2 ? 0.7 : 1;
+    const style = n === 0 ? '' : `background:${color};opacity:${opacity}`;
+    return `<div class="heatmap-cell" style="${style}" title="${dateStr}"></div>`;
+  }).join('')}</div>`;
+}
+
+function openTagDetail(tag) {
+  const tasksWithTag = state.tasks.filter(t => (t.tags.length ? t.tags : ['untagged']).includes(tag));
+  const ranked = tasksWithTag
+    .map(t => ({ t, count: t.completions.length }))
+    .filter(x => x.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  openModal(`
+    <h2><span style="color:${colorFor(tag)}">●</span> ${tag}</h2>
+    <p class="section-label" style="margin-top:0">Last 18 weeks</p>
+    ${tagHeatmapHTML(tag, 18)}
+    <p class="section-label">Most done</p>
+    ${ranked.length ? `<div class="history-list">${ranked.map(({ t, count }) => `
+      <div class="history-item"><span>${t.emoji ? t.emoji + ' ' : ''}${t.title}</span><span>${count}×</span></div>
+    `).join('')}</div>` : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
+  `);
 }
 
 // ---------- tabs ----------

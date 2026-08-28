@@ -176,6 +176,9 @@ const state = {
   tasks: loadTasks(),
   tab: 'due',
   statsPeriod: 30,
+  statsCalOffset: 0,
+  statsWeekOffset: 0,
+  statsTapped: null,
 };
 
 function mutate(fn) {
@@ -328,10 +331,26 @@ function renderStats() {
     const b = document.createElement('button');
     b.className = 'tab' + (state.statsPeriod === days ? ' active' : '');
     b.textContent = label;
-    b.addEventListener('click', () => { state.statsPeriod = days; render(); });
+    b.addEventListener('click', () => {
+      state.statsPeriod = days;
+      state.statsTapped = null;
+      render();
+    });
     toggle.appendChild(b);
   });
   viewEl.appendChild(toggle);
+
+  if (state.statsPeriod === 7) {
+    viewEl.appendChild(buildBarSection(null, state.statsWeekOffset, state.statsTapped,
+      (offset) => { state.statsWeekOffset = offset; state.statsTapped = null; render(); },
+      (dateStr) => { state.statsTapped = state.statsTapped === dateStr ? null : dateStr; render(); }
+    ));
+  } else {
+    viewEl.appendChild(buildCalendarSection(null, state.statsCalOffset, state.statsTapped,
+      (offset) => { state.statsCalOffset = offset; state.statsTapped = null; render(); },
+      (dateStr) => { state.statsTapped = state.statsTapped === dateStr ? null : dateStr; render(); }
+    ));
+  }
 
   const cutoff = toISODate(new Date(Date.now() - state.statsPeriod * 86400000));
   const counts = {};
@@ -344,7 +363,7 @@ function renderStats() {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   if (!entries.length) {
-    viewEl.appendChild(emptyState('No activity yet', 'Complete a few things to see stats here.'));
+    viewEl.appendChild(emptyState('No activity in this period', 'Complete a few things to see stats here.'));
     return;
   }
   entries.forEach(([tag, count]) => {
@@ -357,59 +376,188 @@ function renderStats() {
   });
 }
 
-// ---------- tag detail (heatmap + ranking) ----------
-function tagCompletionCounts(tag) {
-  const byDate = {};
+// ---------- calendar / bar views (shared by overview stats and tag detail) ----------
+function completionsForDate(dateStr, tagFilter) {
+  const items = [];
   state.tasks.forEach(t => {
     const tags = t.tags.length ? t.tags : ['untagged'];
-    if (!tags.includes(tag)) return;
-    t.completions.forEach(c => { byDate[c] = (byDate[c] || 0) + 1; });
+    if (tagFilter && !tags.includes(tagFilter)) return;
+    if (t.completions.includes(dateStr)) items.push({ task: t, tags });
   });
-  return byDate;
+  return items;
 }
 
-function tagHeatmapHTML(tag, weeks) {
-  const byDate = tagCompletionCounts(tag);
-  const totalDays = weeks * 7;
-  const today = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - (totalDays - 1));
-  const startPad = start.getDay();
-  const endPad = 6 - today.getDay();
-  const cells = [];
-  for (let i = 0; i < startPad; i++) cells.push(null);
-  for (let i = 0; i < totalDays; i++) {
+function popoverHTML(dateStr, tagFilter) {
+  const items = completionsForDate(dateStr, tagFilter);
+  if (!items.length) return '';
+  const rows = items.map(({ task, tags }) => {
+    const color = colorFor(tagFilter || tags[0]);
+    const tagLabel = tagFilter ? '' : ` <span style="opacity:0.5;font-weight:600">· ${tags[0]}</span>`;
+    return `<div class="item"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}</div>`;
+  }).join('');
+  return `<div class="popover"><div class="date">${formatDateHuman(dateStr)}</div>${rows}</div>`;
+}
+
+function monthOffsetDate(monthsBack) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - monthsBack);
+  return d;
+}
+
+function weekOffsetStart(weeksBack) {
+  const d = new Date();
+  d.setDate(d.getDate() - weeksBack * 7);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+function buildCalendarSection(tagFilter, monthsBack, tappedDate, onNav, onTapDay) {
+  const base = monthOffsetDate(monthsBack);
+  const year = base.getFullYear(), month = base.getMonth();
+  const monthLabel = base.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const startPad = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = todayStr();
+
+  const card = document.createElement('div');
+  card.className = 'cal-card';
+
+  const header = document.createElement('div');
+  header.className = 'cal-header';
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = '‹';
+  prevBtn.addEventListener('click', () => onNav(monthsBack + 1));
+  const monthSpan = document.createElement('span');
+  monthSpan.className = 'month';
+  monthSpan.textContent = monthLabel;
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = '›';
+  nextBtn.disabled = monthsBack <= 0;
+  nextBtn.addEventListener('click', () => onNav(Math.max(0, monthsBack - 1)));
+  header.append(prevBtn, monthSpan, nextBtn);
+  card.appendChild(header);
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-grid';
+  WEEKDAY_LABELS.forEach(l => {
+    const el = document.createElement('div');
+    el.className = 'cal-dow';
+    el.textContent = l;
+    grid.appendChild(el);
+  });
+  for (let i = 0; i < startPad; i++) {
+    const el = document.createElement('div');
+    el.className = 'cal-day empty';
+    grid.appendChild(el);
+  }
+  for (let dnum = 1; dnum <= daysInMonth; dnum++) {
+    const dateStr = toISODate(new Date(year, month, dnum));
+    const items = completionsForDate(dateStr, tagFilter);
+    const el = document.createElement('div');
+    el.className = 'cal-day' + (dateStr === today ? ' today' : '') + (dateStr === tappedDate ? ' tapped' : '');
+    el.innerHTML = `${dnum}` + (items.length ? `<div class="dots">${items.slice(0, 4).map(({ tags }) => `<span class="dot" style="background:${colorFor(tagFilter || tags[0])}"></span>`).join('')}</div>` : '');
+    if (items.length) el.addEventListener('click', () => onTapDay(dateStr));
+    grid.appendChild(el);
+  }
+  card.appendChild(grid);
+
+  if (tappedDate) {
+    const pop = popoverHTML(tappedDate, tagFilter);
+    if (pop) card.insertAdjacentHTML('beforeend', pop);
+  }
+
+  return card;
+}
+
+function buildBarSection(tagFilter, weeksBack, tappedDate, onNav, onTapDay) {
+  const start = weekOffsetStart(weeksBack);
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
     const d = new Date(start);
     d.setDate(d.getDate() + i);
-    cells.push(toISODate(d));
+    dates.push(toISODate(d));
   }
-  for (let i = 0; i < endPad; i++) cells.push(null);
-  const color = colorFor(tag);
-  return `<div class="heatmap" style="grid-template-rows: repeat(7, 1fr);">${cells.map(dateStr => {
-    if (!dateStr) return '<div class="heatmap-cell heatmap-empty"></div>';
-    const n = byDate[dateStr] || 0;
-    const opacity = n === 0 ? 0 : n === 1 ? 0.4 : n === 2 ? 0.7 : 1;
-    const style = n === 0 ? '' : `background:${color};opacity:${opacity}`;
-    return `<div class="heatmap-cell" style="${style}" title="${dateStr}"></div>`;
-  }).join('')}</div>`;
+  const today = todayStr();
+
+  const card = document.createElement('div');
+  card.className = 'bar-card';
+
+  const header = document.createElement('div');
+  header.className = 'cal-header';
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = '‹';
+  prevBtn.addEventListener('click', () => onNav(weeksBack + 1));
+  const label = document.createElement('span');
+  label.className = 'month';
+  label.textContent = `${formatDateHuman(dates[0])} – ${formatDateHuman(dates[6])}`;
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = '›';
+  nextBtn.disabled = weeksBack <= 0;
+  nextBtn.addEventListener('click', () => onNav(Math.max(0, weeksBack - 1)));
+  header.append(prevBtn, label, nextBtn);
+  card.appendChild(header);
+
+  const chart = document.createElement('div');
+  chart.className = 'bar-chart';
+  dates.forEach((dateStr, i) => {
+    const items = completionsForDate(dateStr, tagFilter);
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+    const stack = document.createElement('div');
+    stack.className = 'bar-stack' + (items.length ? ' has-bars' : '') + (dateStr === tappedDate ? ' tapped-bar' : '');
+    stack.style.height = (items.length * 24) + 'px';
+    items.forEach(({ tags }) => {
+      const seg = document.createElement('div');
+      seg.className = 'bar-seg';
+      seg.style.height = '24px';
+      seg.style.background = colorFor(tagFilter || tags[0]);
+      stack.appendChild(seg);
+    });
+    if (items.length) stack.addEventListener('click', () => onTapDay(dateStr));
+    const dow = document.createElement('span');
+    dow.className = 'bar-dow' + (dateStr === today ? ' today' : '');
+    dow.textContent = WEEKDAY_LABELS[i];
+    col.append(stack, dow);
+    chart.appendChild(col);
+  });
+  card.appendChild(chart);
+
+  if (tappedDate) {
+    const pop = popoverHTML(tappedDate, tagFilter);
+    if (pop) card.insertAdjacentHTML('beforeend', pop);
+  }
+
+  return card;
 }
 
+// ---------- tag detail ----------
 function openTagDetail(tag) {
-  const tasksWithTag = state.tasks.filter(t => (t.tags.length ? t.tags : ['untagged']).includes(tag));
-  const ranked = tasksWithTag
-    .map(t => ({ t, count: t.completions.length }))
-    .filter(x => x.count > 0)
-    .sort((a, b) => b.count - a.count);
+  let monthsBack = 0;
+  let tapped = null;
 
-  openModal(`
-    <h2><span style="color:${colorFor(tag)}">●</span> ${tag}</h2>
-    <p class="section-label" style="margin-top:0">Last 18 weeks</p>
-    ${tagHeatmapHTML(tag, 18)}
-    <p class="section-label">Most done</p>
-    ${ranked.length ? `<div class="history-list">${ranked.map(({ t, count }) => `
-      <div class="history-item"><span>${t.emoji ? t.emoji + ' ' : ''}${t.title}</span><span>${count}×</span></div>
-    `).join('')}</div>` : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
-  `);
+  function renderBody() {
+    const tasksWithTag = state.tasks.filter(t => (t.tags.length ? t.tags : ['untagged']).includes(tag));
+    const ranked = tasksWithTag
+      .map(t => ({ t, count: t.completions.length }))
+      .filter(x => x.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    openModal(`
+      <h2><span style="color:${colorFor(tag)}">●</span> ${tag}</h2>
+      <div id="tag-cal-slot"></div>
+      <p class="section-label">Most done</p>
+      ${ranked.length ? `<div class="history-list">${ranked.map(({ t, count }) => `
+        <div class="history-item"><span>${t.emoji ? t.emoji + ' ' : ''}${t.title}</span><span>${count}×</span></div>
+      `).join('')}</div>` : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
+    `);
+    document.getElementById('tag-cal-slot').appendChild(buildCalendarSection(tag, monthsBack, tapped,
+      (offset) => { monthsBack = offset; tapped = null; renderBody(); },
+      (dateStr) => { tapped = tapped === dateStr ? null : dateStr; renderBody(); }
+    ));
+  }
+
+  renderBody();
 }
 
 // ---------- tabs ----------

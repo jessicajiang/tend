@@ -213,6 +213,13 @@ function deleteCompletion(taskId, dateStr) {
   mutate(() => {});
 }
 
+function setArchived(taskId, archived) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.archived = archived;
+  mutate(() => {});
+}
+
 function deleteTask(taskId) {
   state.tasks = state.tasks.filter(t => t.id !== taskId);
   mutate(() => {});
@@ -228,7 +235,7 @@ function render() {
   else if (state.tab === 'stats') renderStats();
 }
 
-// ---------- swipe-to-delete ----------
+// ---------- swipe-to-archive ----------
 const SWIPE_ACTION_WIDTH = 84;
 let openSwipeEl = null;
 
@@ -239,7 +246,7 @@ function closeSwipe(wrapper) {
   if (openSwipeEl === wrapper) openSwipeEl = null;
 }
 
-function attachSwipeToDelete(wrapper, cardEl, task) {
+function attachSwipeToArchive(wrapper, cardEl, task) {
   let startX = 0, startY = 0, baseX = 0, dragging = false, decided = false, isHorizontal = false;
 
   cardEl.addEventListener('pointerdown', (e) => {
@@ -294,20 +301,16 @@ function attachSwipeToDelete(wrapper, cardEl, task) {
     }
   });
 
-  const delBtn = document.createElement('button');
-  delBtn.className = 'swipe-delete-btn';
-  delBtn.textContent = 'Delete';
-  delBtn.addEventListener('click', (e) => {
+  const actionBtn = document.createElement('button');
+  actionBtn.className = 'swipe-action-btn' + (task.archived ? ' unarchive' : ' archive');
+  actionBtn.textContent = task.archived ? 'Unarchive' : 'Archive';
+  actionBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Delete "${task.title}"? This can't be undone.`)) {
-      deleteTask(task.id);
-    } else {
-      closeSwipe(wrapper);
-    }
+    setArchived(task.id, !task.archived);
   });
   const actions = document.createElement('div');
-  actions.className = 'card-swipe-actions';
-  actions.appendChild(delBtn);
+  actions.className = 'card-swipe-actions' + (task.archived ? ' unarchive' : ' archive');
+  actions.appendChild(actionBtn);
   wrapper.appendChild(actions);
 }
 
@@ -320,6 +323,8 @@ function taskCard(task, status) {
   badge.textContent = task.emoji || task.title[0].toUpperCase();
   el.appendChild(badge);
 
+  if (task.archived) el.classList.add('archived');
+
   const body = document.createElement('div');
   body.className = 'card-body';
   const title = document.createElement('p');
@@ -327,7 +332,7 @@ function taskCard(task, status) {
   title.textContent = task.title;
   const meta = document.createElement('p');
   meta.className = 'card-meta' + (status.due && status.overdueDays > 0 ? ' overdue' : '');
-  meta.textContent = metaLabel(task, status) + ' · ' + scheduleLabel(task);
+  meta.textContent = task.archived ? 'Archived · ' + scheduleLabel(task) : metaLabel(task, status) + ' · ' + scheduleLabel(task);
   body.appendChild(title);
   body.appendChild(meta);
   if (task.tags.length) {
@@ -344,21 +349,23 @@ function taskCard(task, status) {
   }
   el.appendChild(body);
 
-  const doneBtn = document.createElement('button');
-  const today = todayStr();
-  const doneToday = task.completions.includes(today);
-  doneBtn.className = 'done-btn' + (doneToday ? ' checked' : '');
-  doneBtn.textContent = doneToday ? '✓' : '';
-  doneBtn.setAttribute('aria-label', 'Mark done');
-  doneBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    doneToday ? unmarkDone(task.id) : markDone(task.id);
-  });
-  el.appendChild(doneBtn);
+  if (!task.archived) {
+    const doneBtn = document.createElement('button');
+    const today = todayStr();
+    const doneToday = task.completions.includes(today);
+    doneBtn.className = 'done-btn' + (doneToday ? ' checked' : '');
+    doneBtn.textContent = doneToday ? '✓' : '';
+    doneBtn.setAttribute('aria-label', 'Mark done');
+    doneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      doneToday ? unmarkDone(task.id) : markDone(task.id);
+    });
+    el.appendChild(doneBtn);
+  }
 
   const wrapper = document.createElement('div');
   wrapper.className = 'card-swipe';
-  attachSwipeToDelete(wrapper, el, task);
+  attachSwipeToArchive(wrapper, el, task);
   el.addEventListener('click', () => openDetail(task.id));
   wrapper.appendChild(el);
   return wrapper;
@@ -367,6 +374,7 @@ function taskCard(task, status) {
 function renderDue() {
   viewEl.innerHTML = '';
   const due = state.tasks
+    .filter(t => !t.archived)
     .map(t => ({ t, status: getStatus(t) }))
     .filter(x => x.status.due)
     .sort((a, b) => a.status.next.localeCompare(b.status.next));
@@ -387,7 +395,10 @@ function renderAll() {
   }
   const rows = scheduled
     .map(t => ({ t, status: getStatus(t) }))
-    .sort((a, b) => (a.status.next || '9999-99-99').localeCompare(b.status.next || '9999-99-99'));
+    .sort((a, b) => {
+      if (!!a.t.archived !== !!b.t.archived) return a.t.archived ? 1 : -1;
+      return (a.status.next || '9999-99-99').localeCompare(b.status.next || '9999-99-99');
+    });
   rows.forEach(({ t, status }) => viewEl.appendChild(taskCard(t, status)));
 }
 
@@ -398,7 +409,10 @@ function renderFree() {
     viewEl.appendChild(emptyState('Nothing here yet', 'Add something you do as-needed, like a hobby or craft.'));
     return;
   }
-  const rows = freeform.slice().sort((a, b) => a.title.localeCompare(b.title));
+  const rows = freeform.slice().sort((a, b) => {
+    if (!!a.archived !== !!b.archived) return a.archived ? 1 : -1;
+    return a.title.localeCompare(b.title);
+  });
   rows.forEach(t => viewEl.appendChild(taskCard(t, getStatus(t))));
 }
 
@@ -770,7 +784,7 @@ function openForm(taskId) {
       state.tasks.push({
         id: uid(), title, emoji, tags, type: selType,
         interval: { value: intervalValue, unit: intervalUnit },
-        weekdays, completions: [], createdAt: todayStr(),
+        weekdays, completions: [], createdAt: todayStr(), archived: false,
       });
     }
     closeModal();
@@ -851,8 +865,11 @@ function openDetail(taskId) {
       <div class="stat-box"><div class="num">${scheduleLabel(t)}</div><div class="lab">Schedule</div></div>
       <div class="stat-box"><div class="num">${avg !== null ? avg + 'd' : '—'}</div><div class="lab">Actual avg</div></div>
     </div>
-    <button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>
+    ${t.archived ? '' : `<button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>`}
     <button class="btn-secondary" id="d-edit">Edit</button>
+    ${t.archived
+      ? '<button class="btn-primary" id="d-unarchive">Unarchive</button>'
+      : '<button class="btn-secondary" id="d-archive">Archive</button>'}
     <p class="section-label" style="margin-top:16px">History (${t.completions.length})</p>
     <div class="history-list">
       ${completions.length ? completions.map(c => `
@@ -861,11 +878,18 @@ function openDetail(taskId) {
     </div>
   `);
 
-  document.getElementById('d-done').addEventListener('click', () => {
-    markDone(t.id);
+  if (!t.archived) {
+    document.getElementById('d-done').addEventListener('click', () => {
+      markDone(t.id);
+      closeModal();
+    });
+  }
+  document.getElementById('d-edit').addEventListener('click', () => openForm(t.id));
+  const archiveBtn = document.getElementById(t.archived ? 'd-unarchive' : 'd-archive');
+  archiveBtn.addEventListener('click', () => {
+    setArchived(t.id, !t.archived);
     closeModal();
   });
-  document.getElementById('d-edit').addEventListener('click', () => openForm(t.id));
   modalEl.querySelectorAll('.history-item button').forEach(btn => {
     btn.addEventListener('click', () => {
       deleteCompletion(t.id, btn.dataset.date);

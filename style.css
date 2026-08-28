@@ -137,17 +137,18 @@ main#view {
   right: 0;
   bottom: 0;
   width: 84px;
-  background: var(--coral);
   border: var(--border);
   border-radius: 20px;
   display: flex;
 }
 
-.swipe-delete-btn {
+.card-swipe-actions.archive { background: var(--ink); }
+.card-swipe-actions.unarchive { background: var(--lime); }
+
+.swipe-action-btn {
   flex: 1;
   border: none;
   background: none;
-  color: #fff;
   font-family: inherit;
   font-weight: 900;
   font-size: 13px;
@@ -155,6 +156,9 @@ main#view {
   letter-spacing: 0.3px;
   cursor: pointer;
 }
+
+.swipe-action-btn.archive { color: #fff; }
+.swipe-action-btn.unarchive { color: var(--ink); }
 
 .card {
   border: var(--border);
@@ -197,6 +201,11 @@ main#view {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.card.archived .card-title { text-decoration: line-through; opacity: 0.55; }
+.card.archived .card-meta { opacity: 0.55; }
+.card.archived .badge { opacity: 0.55; }
+.card.archived .tag-row { opacity: 0.55; }
 
 .card-meta {
   font-size: 12.5px;

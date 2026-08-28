@@ -228,6 +228,89 @@ function render() {
   else if (state.tab === 'stats') renderStats();
 }
 
+// ---------- swipe-to-delete ----------
+const SWIPE_ACTION_WIDTH = 84;
+let openSwipeEl = null;
+
+function closeSwipe(wrapper) {
+  if (!wrapper) return;
+  wrapper.classList.remove('swiped');
+  wrapper.querySelector('.card').style.transform = '';
+  if (openSwipeEl === wrapper) openSwipeEl = null;
+}
+
+function attachSwipeToDelete(wrapper, cardEl, task) {
+  let startX = 0, startY = 0, baseX = 0, dragging = false, decided = false, isHorizontal = false;
+
+  cardEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    startX = e.clientX;
+    startY = e.clientY;
+    baseX = wrapper.classList.contains('swiped') ? -SWIPE_ACTION_WIDTH : 0;
+    dragging = true;
+    decided = false;
+    isHorizontal = false;
+  });
+
+  cardEl.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!decided) {
+      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      decided = true;
+      isHorizontal = Math.abs(dx) > Math.abs(dy);
+      if (!isHorizontal) { dragging = false; return; }
+    }
+    if (!isHorizontal) return;
+    const next = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, baseX + dx));
+    cardEl.style.transition = 'none';
+    cardEl.style.transform = `translateX(${next}px)`;
+  });
+
+  function endDrag(e) {
+    if (!dragging || !isHorizontal) { dragging = false; return; }
+    dragging = false;
+    const dx = e.clientX - startX;
+    const finalX = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, baseX + dx));
+    cardEl.style.transition = '';
+    if (finalX < -SWIPE_ACTION_WIDTH / 2) {
+      if (openSwipeEl && openSwipeEl !== wrapper) closeSwipe(openSwipeEl);
+      cardEl.style.transform = `translateX(${-SWIPE_ACTION_WIDTH}px)`;
+      wrapper.classList.add('swiped');
+      openSwipeEl = wrapper;
+    } else {
+      closeSwipe(wrapper);
+    }
+  }
+  cardEl.addEventListener('pointerup', endDrag);
+  cardEl.addEventListener('pointercancel', endDrag);
+
+  // guard: if this card is swiped open, a tap on it just closes it instead of opening detail
+  cardEl.addEventListener('click', (e) => {
+    if (wrapper.classList.contains('swiped')) {
+      e.stopImmediatePropagation();
+      closeSwipe(wrapper);
+    }
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'swipe-delete-btn';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (confirm(`Delete "${task.title}"? This can't be undone.`)) {
+      deleteTask(task.id);
+    } else {
+      closeSwipe(wrapper);
+    }
+  });
+  const actions = document.createElement('div');
+  actions.className = 'card-swipe-actions';
+  actions.appendChild(delBtn);
+  wrapper.appendChild(actions);
+}
+
 function taskCard(task, status) {
   const el = document.createElement('div');
   el.className = 'card';
@@ -273,8 +356,12 @@ function taskCard(task, status) {
   });
   el.appendChild(doneBtn);
 
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card-swipe';
+  attachSwipeToDelete(wrapper, el, task);
   el.addEventListener('click', () => openDetail(task.id));
-  return el;
+  wrapper.appendChild(el);
+  return wrapper;
 }
 
 function renderDue() {

@@ -125,6 +125,37 @@ main#view {
   margin-top: 6px;
 }
 
+.card-swipe {
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.card-swipe-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 84px;
+  background: var(--coral);
+  border: var(--border);
+  border-radius: 20px;
+  display: flex;
+}
+
+.swipe-delete-btn {
+  flex: 1;
+  border: none;
+  background: none;
+  color: #fff;
+  font-family: inherit;
+  font-weight: 900;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+}
+
 .card {
   border: var(--border);
   border-radius: 20px;
@@ -136,6 +167,8 @@ main#view {
   gap: 12px;
   cursor: pointer;
   transition: transform 0.05s ease;
+  touch-action: pan-y;
+  position: relative;
 }
 
 .card:active { transform: translate(2px, 2px); box-shadow: 3px 3px 0 var(--ink); }

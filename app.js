@@ -4,10 +4,19 @@ const STORAGE_KEY = 'loop.tasks.v1';
 function loadTasks() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : seedTasks();
+    const tasks = raw ? JSON.parse(raw) : seedTasks();
+    pruneExpiredSnoozes(tasks);
+    return tasks;
   } catch (e) {
     return seedTasks();
   }
+}
+
+function pruneExpiredSnoozes(tasks) {
+  const today = todayStr();
+  tasks.forEach(t => {
+    if (t.snoozedUntil && t.snoozedUntil <= today) t.snoozedUntil = null;
+  });
 }
 
 function saveTasks() {
@@ -213,11 +222,39 @@ function deleteCompletion(taskId, dateStr) {
   mutate(() => {});
 }
 
+function editCompletionDate(taskId, oldDate, newDate) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.completions = t.completions.filter(c => c !== oldDate && c !== newDate);
+  t.completions.push(newDate);
+  t.completions.sort();
+  mutate(() => {});
+}
+
 function setArchived(taskId, archived) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
   t.archived = archived;
   mutate(() => {});
+}
+
+function isSnoozed(task) {
+  return !!(task.snoozedUntil && task.snoozedUntil > todayStr());
+}
+
+function setSnooze(taskId, dateStr) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.snoozedUntil = dateStr;
+  mutate(() => {});
+}
+
+function nextWeekendDate() {
+  const d = parseISO(todayStr());
+  do {
+    d.setDate(d.getDate() + 1);
+  } while (d.getDay() !== 6);
+  return toISODate(d);
 }
 
 function deleteTask(taskId) {
@@ -246,8 +283,17 @@ function closeSwipe(wrapper) {
   if (openSwipeEl === wrapper) openSwipeEl = null;
 }
 
+const LONG_PRESS_MS = 500;
+
 function attachSwipeToArchive(wrapper, cardEl, task) {
   let startX = 0, startY = 0, baseX = 0, dragging = false, decided = false, isHorizontal = false;
+  let longPressTimer = null, longPressFired = false;
+  const canSnooze = task.type !== 'freeform';
+
+  function clearLongPress() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    cardEl.classList.remove('longpress-active');
+  }
 
   cardEl.addEventListener('pointerdown', (e) => {
     if (e.button !== undefined && e.button !== 0) return;
@@ -257,6 +303,16 @@ function attachSwipeToArchive(wrapper, cardEl, task) {
     dragging = true;
     decided = false;
     isHorizontal = false;
+    longPressFired = false;
+    if (canSnooze) {
+      cardEl.classList.add('longpress-active');
+      longPressTimer = setTimeout(() => {
+        longPressFired = true;
+        dragging = false;
+        clearLongPress();
+        openSnoozeSheet(task);
+      }, LONG_PRESS_MS);
+    }
   });
 
   cardEl.addEventListener('pointermove', (e) => {
@@ -267,6 +323,7 @@ function attachSwipeToArchive(wrapper, cardEl, task) {
       if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
       decided = true;
       isHorizontal = Math.abs(dx) > Math.abs(dy);
+      clearLongPress();
       if (!isHorizontal) { dragging = false; return; }
     }
     if (!isHorizontal) return;
@@ -276,6 +333,7 @@ function attachSwipeToArchive(wrapper, cardEl, task) {
   });
 
   function endDrag(e) {
+    clearLongPress();
     if (!dragging || !isHorizontal) { dragging = false; return; }
     dragging = false;
     const dx = e.clientX - startX;
@@ -293,8 +351,12 @@ function attachSwipeToArchive(wrapper, cardEl, task) {
   cardEl.addEventListener('pointerup', endDrag);
   cardEl.addEventListener('pointercancel', endDrag);
 
-  // guard: if this card is swiped open, a tap on it just closes it instead of opening detail
+  // guard: swiped-open or a long-press just fired -> a tap just resolves that, not opening detail
   cardEl.addEventListener('click', (e) => {
+    if (longPressFired) {
+      e.stopImmediatePropagation();
+      return;
+    }
     if (wrapper.classList.contains('swiped')) {
       e.stopImmediatePropagation();
       closeSwipe(wrapper);
@@ -347,6 +409,12 @@ function taskCard(task, status) {
     });
     body.appendChild(tagRow);
   }
+  if (!task.archived && isSnoozed(task)) {
+    const tag = document.createElement('span');
+    tag.className = 'snoozed-tag';
+    tag.textContent = `😴 Snoozed until ${formatDateHuman(task.snoozedUntil)}`;
+    body.appendChild(tag);
+  }
   el.appendChild(body);
 
   if (!task.archived) {
@@ -374,7 +442,7 @@ function taskCard(task, status) {
 function renderDue() {
   viewEl.innerHTML = '';
   const due = state.tasks
-    .filter(t => !t.archived)
+    .filter(t => !t.archived && !isSnoozed(t))
     .map(t => ({ t, status: getStatus(t) }))
     .filter(x => x.status.due)
     .sort((a, b) => a.status.next.localeCompare(b.status.next));
@@ -494,9 +562,15 @@ function popoverHTML(dateStr, tagFilter) {
   const rows = items.map(({ task, tags }) => {
     const color = colorFor(tagFilter || tags[0]);
     const tagLabel = tagFilter ? '' : ` <span style="opacity:0.5;font-weight:600">· ${tags[0]}</span>`;
-    return `<div class="item"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}</div>`;
+    return `<div class="item" data-task-id="${task.id}"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}</div>`;
   }).join('');
   return `<div class="popover"><div class="date">${formatDateHuman(dateStr)}</div>${rows}</div>`;
+}
+
+function wirePopoverClicks(container) {
+  container.querySelectorAll('.popover .item[data-task-id]').forEach(el => {
+    el.addEventListener('click', () => openDetail(el.dataset.taskId));
+  });
 }
 
 function monthOffsetDate(monthsBack) {
@@ -565,7 +639,7 @@ function buildCalendarSection(tagFilter, monthsBack, tappedDate, onNav, onTapDay
 
   if (tappedDate) {
     const pop = popoverHTML(tappedDate, tagFilter);
-    if (pop) card.insertAdjacentHTML('beforeend', pop);
+    if (pop) { card.insertAdjacentHTML('beforeend', pop); wirePopoverClicks(card); }
   }
 
   return card;
@@ -626,7 +700,7 @@ function buildBarSection(tagFilter, weeksBack, tappedDate, onNav, onTapDay) {
 
   if (tappedDate) {
     const pop = popoverHTML(tappedDate, tagFilter);
-    if (pop) card.insertAdjacentHTML('beforeend', pop);
+    if (pop) { card.insertAdjacentHTML('beforeend', pop); wirePopoverClicks(card); }
   }
 
   return card;
@@ -848,6 +922,42 @@ function setupTagAutocomplete() {
   });
 }
 
+function openSnoozeSheet(task) {
+  const tomorrow = addInterval(todayStr(), { value: 1, unit: 'day' });
+  const weekend = nextWeekendDate();
+  const nextWeek = addInterval(todayStr(), { value: 7, unit: 'day' });
+  const minDate = tomorrow;
+
+  openModal(`
+    <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
+    <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Move this out of Due until —</p>
+    <button class="snooze-option" data-date="${tomorrow}"><span>Tomorrow</span><span class="when">${formatDateHuman(tomorrow)}</span></button>
+    <button class="snooze-option" data-date="${weekend}"><span>This weekend</span><span class="when">${formatDateHuman(weekend)}</span></button>
+    <button class="snooze-option" data-date="${nextWeek}"><span>Next week</span><span class="when">${formatDateHuman(nextWeek)}</span></button>
+    <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>
+    <input type="date" id="snooze-date-input" min="${minDate}" style="display:none">
+  `);
+
+  modalEl.querySelectorAll('.snooze-option[data-date]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setSnooze(task.id, btn.dataset.date);
+      closeModal();
+    });
+  });
+  const dateInput = document.getElementById('snooze-date-input');
+  document.getElementById('snooze-custom').addEventListener('click', () => {
+    dateInput.style.display = 'block';
+    dateInput.focus();
+    if (dateInput.showPicker) dateInput.showPicker();
+  });
+  dateInput.addEventListener('change', () => {
+    if (dateInput.value) {
+      setSnooze(task.id, dateInput.value);
+      closeModal();
+    }
+  });
+}
+
 function openDetail(taskId) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
@@ -873,7 +983,7 @@ function openDetail(taskId) {
     <p class="section-label" style="margin-top:16px">History (${t.completions.length})</p>
     <div class="history-list">
       ${completions.length ? completions.map(c => `
-        <div class="history-item"><span>${formatDateHuman(c)}</span><button data-date="${c}">✕</button></div>
+        <div class="history-item"><input type="date" class="history-date-input" value="${c}" data-date="${c}"><button data-date="${c}">✕</button></div>
       `).join('') : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
     </div>
   `);
@@ -893,6 +1003,12 @@ function openDetail(taskId) {
   modalEl.querySelectorAll('.history-item button').forEach(btn => {
     btn.addEventListener('click', () => {
       deleteCompletion(t.id, btn.dataset.date);
+      openDetail(t.id);
+    });
+  });
+  modalEl.querySelectorAll('.history-date-input').forEach(input => {
+    input.addEventListener('change', () => {
+      if (input.value) editCompletionDate(t.id, input.dataset.date, input.value);
       openDetail(t.id);
     });
   });

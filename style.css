@@ -176,6 +176,57 @@ main#view {
 }
 
 .card:active { transform: translate(2px, 2px); box-shadow: 3px 3px 0 var(--ink); }
+.card.longpress-active { outline: 3px dashed var(--ink); outline-offset: 4px; }
+
+.snoozed-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--sky);
+  color: #fff;
+  margin-top: 6px;
+}
+
+.snooze-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: var(--border);
+  border-radius: 14px;
+  background: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--ink);
+  margin-bottom: 10px;
+  box-shadow: 3px 3px 0 var(--ink);
+  cursor: pointer;
+}
+
+.snooze-option:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+.snooze-option .when { font-weight: 600; font-size: 12.5px; opacity: 0.55; }
+.snooze-option.custom { background: var(--sunflower); }
+
+#snooze-date-input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 12px 14px;
+  border: var(--border);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  margin-top: -4px;
+  margin-bottom: 10px;
+}
 
 .badge {
   flex: none;
@@ -496,6 +547,16 @@ main#view {
   background: #fff;
 }
 
+.history-date-input {
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  padding: 0;
+}
+
 .history-item button {
   background: none;
   border: none;
@@ -690,6 +751,7 @@ main#view {
   gap: 8px;
   padding: 5px 0;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .popover .item .swatch {

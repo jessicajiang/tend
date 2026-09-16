@@ -549,13 +549,16 @@ main#view {
 
 .history-date-input {
   border: none;
+  border-bottom: 2px dashed var(--ink);
   background: none;
   font-family: inherit;
   font-size: 14px;
   font-weight: 700;
   color: var(--ink);
-  padding: 0;
+  padding: 0 0 2px;
+  cursor: pointer;
 }
+
 
 .history-item button {
   background: none;

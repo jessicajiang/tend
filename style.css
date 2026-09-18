@@ -23,6 +23,15 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea {
+  -webkit-user-select: auto;
+  user-select: auto;
+  -webkit-touch-callout: default;
 }
 
 body {
@@ -534,6 +543,8 @@ main#view {
   gap: 8px;
   margin-top: 8px;
 }
+
+.history-item[data-task-id] { cursor: pointer; }
 
 .history-item {
   display: flex;

@@ -723,13 +723,16 @@ function openTagDetail(tag) {
       <div id="tag-cal-slot"></div>
       <p class="section-label">Most done</p>
       ${ranked.length ? `<div class="history-list">${ranked.map(({ t, count }) => `
-        <div class="history-item"><span>${t.emoji ? t.emoji + ' ' : ''}${t.title}</span><span>${count}×</span></div>
+        <div class="history-item" data-task-id="${t.id}"><span>${t.emoji ? t.emoji + ' ' : ''}${t.title}</span><span>${count}×</span></div>
       `).join('')}</div>` : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
     `);
     document.getElementById('tag-cal-slot').appendChild(buildCalendarSection(tag, monthsBack, tapped,
       (offset) => { monthsBack = offset; tapped = null; renderBody(); },
       (dateStr) => { tapped = tapped === dateStr ? null : dateStr; renderBody(); }
     ));
+    modalEl.querySelectorAll('.history-list .history-item[data-task-id]').forEach(el => {
+      el.addEventListener('click', () => openDetail(el.dataset.taskId));
+    });
   }
 
   renderBody();

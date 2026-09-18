@@ -925,40 +925,103 @@ function setupTagAutocomplete() {
   });
 }
 
+function buildDatePickerCalendar(monthsForward, minDateStr, onNav, onPick) {
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + monthsForward);
+  const year = base.getFullYear(), month = base.getMonth();
+  const monthLabel = base.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const startPad = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const card = document.createElement('div');
+  card.className = 'cal-card';
+
+  const header = document.createElement('div');
+  header.className = 'cal-header';
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = '‹';
+  prevBtn.disabled = monthsForward <= 0;
+  prevBtn.addEventListener('click', () => onNav(Math.max(0, monthsForward - 1)));
+  const monthSpan = document.createElement('span');
+  monthSpan.className = 'month';
+  monthSpan.textContent = monthLabel;
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = '›';
+  nextBtn.addEventListener('click', () => onNav(monthsForward + 1));
+  header.append(prevBtn, monthSpan, nextBtn);
+  card.appendChild(header);
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-grid';
+  WEEKDAY_LABELS.forEach(l => {
+    const el = document.createElement('div');
+    el.className = 'cal-dow';
+    el.textContent = l;
+    grid.appendChild(el);
+  });
+  for (let i = 0; i < startPad; i++) {
+    const el = document.createElement('div');
+    el.className = 'cal-day empty';
+    grid.appendChild(el);
+  }
+  for (let dnum = 1; dnum <= daysInMonth; dnum++) {
+    const dateStr = toISODate(new Date(year, month, dnum));
+    const disabled = dateStr < minDateStr;
+    const el = document.createElement('div');
+    el.className = 'cal-day' + (disabled ? ' disabled' : '');
+    el.textContent = String(dnum);
+    if (!disabled) el.addEventListener('click', () => onPick(dateStr));
+    grid.appendChild(el);
+  }
+  card.appendChild(grid);
+  return card;
+}
+
 function openSnoozeSheet(task) {
   const tomorrow = addInterval(todayStr(), { value: 1, unit: 'day' });
   const weekend = nextWeekendDate();
   const nextWeek = addInterval(todayStr(), { value: 7, unit: 'day' });
-  const minDate = tomorrow;
+  let showCustom = false;
+  let monthsForward = 0;
 
-  openModal(`
-    <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
-    <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Move this out of Due until —</p>
-    <button class="snooze-option" data-date="${tomorrow}"><span>Tomorrow</span><span class="when">${formatDateHuman(tomorrow)}</span></button>
-    <button class="snooze-option" data-date="${weekend}"><span>This weekend</span><span class="when">${formatDateHuman(weekend)}</span></button>
-    <button class="snooze-option" data-date="${nextWeek}"><span>Next week</span><span class="when">${formatDateHuman(nextWeek)}</span></button>
-    <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>
-    <input type="date" id="snooze-date-input" min="${minDate}" style="display:none">
-  `);
-
-  modalEl.querySelectorAll('.snooze-option[data-date]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      setSnooze(task.id, btn.dataset.date);
-      closeModal();
-    });
-  });
-  const dateInput = document.getElementById('snooze-date-input');
-  document.getElementById('snooze-custom').addEventListener('click', () => {
-    dateInput.style.display = 'block';
-    dateInput.focus();
-    if (dateInput.showPicker) dateInput.showPicker();
-  });
-  dateInput.addEventListener('change', () => {
-    if (dateInput.value) {
-      setSnooze(task.id, dateInput.value);
-      closeModal();
+  function render() {
+    if (!showCustom) {
+      openModal(`
+        <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
+        <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Move this out of Due until —</p>
+        <button class="snooze-option" data-date="${tomorrow}"><span>Tomorrow</span><span class="when">${formatDateHuman(tomorrow)}</span></button>
+        <button class="snooze-option" data-date="${weekend}"><span>This weekend</span><span class="when">${formatDateHuman(weekend)}</span></button>
+        <button class="snooze-option" data-date="${nextWeek}"><span>Next week</span><span class="when">${formatDateHuman(nextWeek)}</span></button>
+        <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>
+      `);
+      modalEl.querySelectorAll('.snooze-option[data-date]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setSnooze(task.id, btn.dataset.date);
+          closeModal();
+        });
+      });
+      document.getElementById('snooze-custom').addEventListener('click', () => {
+        showCustom = true;
+        render();
+      });
+    } else {
+      openModal(`
+        <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
+        <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Pick a date to snooze until</p>
+        <div id="snooze-cal-slot"></div>
+      `);
+      const minDate = addInterval(todayStr(), { value: 1, unit: 'day' });
+      document.getElementById('snooze-cal-slot').appendChild(
+        buildDatePickerCalendar(monthsForward, minDate,
+          (offset) => { monthsForward = offset; render(); },
+          (dateStr) => { setSnooze(task.id, dateStr); closeModal(); }
+        )
+      );
     }
-  });
+  }
+
+  render();
 }
 
 function openDetail(taskId) {

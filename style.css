@@ -223,19 +223,7 @@ main#view {
 .snooze-option .when { font-weight: 600; font-size: 12.5px; opacity: 0.55; }
 .snooze-option.custom { background: var(--sunflower); }
 
-#snooze-date-input {
-  width: 100%;
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 600;
-  padding: 12px 14px;
-  border: var(--border);
-  border-radius: 14px;
-  background: #fff;
-  color: var(--ink);
-  margin-top: -4px;
-  margin-bottom: 10px;
-}
+.cal-day.disabled { opacity: 0.25; }
 
 .badge {
   flex: none;

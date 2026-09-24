@@ -857,3 +857,32 @@ main#view {
 .popover .daily-swatch { background: var(--sunflower); border: 1px solid var(--ink); }
 .popover .item .mark { margin-left: auto; }
 .popover .item.missed { opacity: 0.45; }
+
+/* pins: queued (warm yellow) and in progress (mint) */
+.card.pin-queued { background: #FFF3BF; }
+.card.pin-progress { background: #E4F9F2; }
+
+.pin-chip {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+}
+
+.pin-chip.queued { background: var(--sunflower); }
+.pin-chip.progress { background: var(--mint); }
+
+.snooze-option.q { background: #FFF3BF; }
+.snooze-option.ip { background: var(--mint); }
+.snooze-option.fin { background: var(--lime); }
+
+.btn-row { display: flex; gap: 10px; }
+.btn-row .btn-secondary { flex: 1; width: auto; }
+.btn-secondary.q { background: #FFF3BF; }
+.btn-secondary.ip { background: var(--mint); }
+.btn-secondary.fin { background: var(--lime); }

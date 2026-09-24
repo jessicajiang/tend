@@ -211,6 +211,15 @@ function markDone(taskId) {
   if (!t.completions.includes(today)) {
     t.completions.push(today);
     t.completions.sort();
+    t.prevPin = null;
+    if (t.pin) {
+      if (t.type === 'freeform') {
+        if (t.pin === 'queued') t.pin = 'progress';
+      } else {
+        t.prevPin = t.pin;
+        t.pin = null;
+      }
+    }
   }
   mutate(() => {});
 }
@@ -219,8 +228,29 @@ function unmarkDone(taskId) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
   const today = todayStr();
+  if (t.prevPin && t.completions.includes(today)) t.pin = t.prevPin;
+  t.prevPin = null;
   t.completions = t.completions.filter(c => c !== today);
   mutate(() => {});
+}
+
+// ---------- pins (queued / in progress) ----------
+function setPin(taskId, pin) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.pin = pin;
+  if (pin) t.snoozedUntil = null;
+  mutate(() => {});
+}
+
+function applyPinAction(task, action) {
+  if (action === 'queue' || action === 'back') setPin(task.id, 'queued');
+  else if (action === 'progress') setPin(task.id, 'progress');
+  else if (action === 'unpin') setPin(task.id, null);
+  else if (action === 'finish') {
+    if (task.type !== 'freeform' && !task.completions.includes(todayStr())) markDone(task.id);
+    else setPin(task.id, null);
+  }
 }
 
 function deleteCompletion(taskId, dateStr) {
@@ -243,6 +273,7 @@ function setArchived(taskId, archived) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
   t.archived = archived;
+  if (archived) t.pin = null;
   if (t.type === 'daily') {
     const periods = t.dailyPeriods = t.dailyPeriods || [];
     if (archived) periods.forEach(p => { if (!p.to) p.to = todayStr(); });
@@ -332,7 +363,7 @@ const LONG_PRESS_MS = 500;
 function attachSwipeToArchive(wrapper, cardEl, task) {
   let startX = 0, startY = 0, baseX = 0, dragging = false, decided = false, isHorizontal = false;
   let longPressTimer = null, longPressFired = false;
-  const canSnooze = task.type !== 'freeform' && task.type !== 'daily';
+  const canSnooze = task.type !== 'daily' && !task.archived;
 
   function clearLongPress() {
     if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
@@ -354,7 +385,7 @@ function attachSwipeToArchive(wrapper, cardEl, task) {
         longPressFired = true;
         dragging = false;
         clearLongPress();
-        openSnoozeSheet(task);
+        openCardSheet(task);
       }, LONG_PRESS_MS);
     }
   });
@@ -430,6 +461,7 @@ function taskCard(task, status) {
   el.appendChild(badge);
 
   if (task.archived) el.classList.add('archived');
+  if (task.pin && !task.archived) el.classList.add(task.pin === 'progress' ? 'pin-progress' : 'pin-queued');
 
   const body = document.createElement('div');
   body.className = 'card-body';
@@ -458,6 +490,12 @@ function taskCard(task, status) {
     tag.className = 'snoozed-tag';
     tag.textContent = `😴 Snoozed until ${formatDateHuman(task.snoozedUntil)}`;
     body.appendChild(tag);
+  }
+  if (task.pin && !task.archived) {
+    const chip = document.createElement('span');
+    chip.className = 'pin-chip ' + (task.pin === 'progress' ? 'progress' : 'queued');
+    chip.textContent = task.pin === 'progress' ? 'In progress' : 'Queued';
+    body.appendChild(chip);
   }
   el.appendChild(body);
 
@@ -530,14 +568,19 @@ function renderDue() {
   viewEl.innerHTML = '';
   const dailiesRow = buildDailiesRow();
   if (dailiesRow) viewEl.appendChild(dailiesRow);
+  const pinned = state.tasks.filter(t => !t.archived && t.type !== 'daily' && t.pin);
+  const byTitle = (a, b) => a.title.localeCompare(b.title);
+  pinned.filter(t => t.pin === 'progress').sort(byTitle).forEach(t => viewEl.appendChild(taskCard(t, getStatus(t))));
+  pinned.filter(t => t.pin === 'queued').sort(byTitle).forEach(t => viewEl.appendChild(taskCard(t, getStatus(t))));
+
   const due = state.tasks
-    .filter(t => !t.archived && !isSnoozed(t))
+    .filter(t => !t.archived && !t.pin && !isSnoozed(t))
     .map(t => ({ t, status: getStatus(t) }))
     .filter(x => x.status.due)
     .sort((a, b) => a.status.next.localeCompare(b.status.next));
 
   if (!due.length) {
-    viewEl.appendChild(emptyState('All caught up! 🎉', 'Nothing due right now.'));
+    if (!pinned.length) viewEl.appendChild(emptyState('All caught up! 🎉', 'Nothing due right now.'));
     return;
   }
   due.forEach(({ t, status }) => viewEl.appendChild(taskCard(t, status)));
@@ -1105,7 +1148,23 @@ function buildDatePickerCalendar(monthsForward, minDateStr, onNav, onPick) {
   return card;
 }
 
-function openSnoozeSheet(task) {
+function pinOptionsHTML(task) {
+  const opt = (action, label, when, cls) => `<button class="snooze-option ${cls || ''}" data-pin-action="${action}"><span>${label}</span><span class="when">${when}</span></button>`;
+  if (!task.pin) return opt('queue', 'Queue it', 'for later', 'q') + opt('progress', 'Mark in progress', "I'm on it now", 'ip');
+  if (task.pin === 'queued') return opt('progress', 'Mark in progress', 'moves up', 'ip') + opt('unpin', 'Unqueue', 'drop the pin');
+  return opt('finish', 'Finished', 'clears the pin', 'fin') + opt('back', 'Back to queue', 'paused', 'q') + opt('unpin', 'Unpin', 'drop it');
+}
+
+function pinRowHTML(t) {
+  if (t.archived || t.type === 'daily') return '';
+  const btn = (action, label, cls) => `<button class="btn-secondary ${cls || ''}" data-pin-action="${action}">${label}</button>`;
+  if (!t.pin) return `<div class="btn-row">${btn('queue', 'Queue', 'q')}${btn('progress', 'In progress', 'ip')}</div>`;
+  if (t.pin === 'queued') return `<div class="btn-row">${btn('progress', 'In progress', 'ip')}${btn('unpin', 'Unqueue')}</div>`;
+  return `<div class="btn-row">${btn('finish', 'Finished', 'fin')}${btn('back', 'Back to queue', 'q')}</div>`;
+}
+
+function openCardSheet(task) {
+  const scheduled = task.type !== 'freeform';
   const tomorrow = addInterval(todayStr(), { value: 1, unit: 'day' });
   const weekend = nextWeekendDate();
   const nextWeek = addInterval(todayStr(), { value: 7, unit: 'day' });
@@ -1113,34 +1172,34 @@ function openSnoozeSheet(task) {
   let monthsForward = 0;
 
   function render() {
+    const head = `<h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>`;
     if (!showCustom) {
-      openModal(`
-        <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
-        <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Move this out of Due until —</p>
+      const sub = task.pin === 'progress' ? 'In progress' : task.pin === 'queued' ? 'Queued' : (scheduled ? 'Pin it, or snooze it out of Due' : 'Pin it to Due');
+      const snoozeBlock = scheduled && !task.pin ? `
+        <p class="section-label" style="margin:16px 0 8px">Snooze until</p>
         <button class="snooze-option" data-date="${tomorrow}"><span>Tomorrow</span><span class="when">${formatDateHuman(tomorrow)}</span></button>
         <button class="snooze-option" data-date="${weekend}"><span>This weekend</span><span class="when">${formatDateHuman(weekend)}</span></button>
         <button class="snooze-option" data-date="${nextWeek}"><span>Next week</span><span class="when">${formatDateHuman(nextWeek)}</span></button>
-        <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>
-      `);
+        <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>` : '';
+      openModal(`${head}<p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">${sub}</p>${pinOptionsHTML(task)}${snoozeBlock}`);
+      modalEl.querySelectorAll('[data-pin-action]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          applyPinAction(task, btn.dataset.pinAction);
+          closeModal();
+        });
+      });
       modalEl.querySelectorAll('.snooze-option[data-date]').forEach(btn => {
         btn.addEventListener('click', () => {
           setSnooze(task.id, btn.dataset.date);
           closeModal();
         });
       });
-      document.getElementById('snooze-custom').addEventListener('click', () => {
-        showCustom = true;
-        render();
-      });
+      const custom = document.getElementById('snooze-custom');
+      if (custom) custom.addEventListener('click', () => { showCustom = true; render(); });
     } else {
-      openModal(`
-        <h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>
-        <p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Pick a date to snooze until</p>
-        <div id="snooze-cal-slot"></div>
-      `);
-      const minDate = addInterval(todayStr(), { value: 1, unit: 'day' });
+      openModal(`${head}<p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Pick a date to snooze until</p><div id="snooze-cal-slot"></div>`);
       document.getElementById('snooze-cal-slot').appendChild(
-        buildDatePickerCalendar(monthsForward, minDate,
+        buildDatePickerCalendar(monthsForward, tomorrow,
           (offset) => { monthsForward = offset; render(); },
           (dateStr) => { setSnooze(task.id, dateStr); closeModal(); }
         )
@@ -1170,6 +1229,7 @@ function openDetail(taskId) {
     </div>
     ${t.archived ? '' : `<button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>`}
     <button class="btn-secondary" id="d-edit">Edit</button>
+    ${pinRowHTML(t)}
     ${t.archived
       ? '<button class="btn-primary" id="d-unarchive">Unarchive</button>'
       : '<button class="btn-secondary" id="d-archive">Archive</button>'}
@@ -1188,6 +1248,12 @@ function openDetail(taskId) {
     });
   }
   document.getElementById('d-edit').addEventListener('click', () => openForm(t.id));
+  modalEl.querySelectorAll('[data-pin-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      applyPinAction(t, btn.dataset.pinAction);
+      closeModal();
+    });
+  });
   const archiveBtn = document.getElementById(t.archived ? 'd-unarchive' : 'd-archive');
   archiveBtn.addEventListener('click', () => {
     setArchived(t.id, !t.archived);

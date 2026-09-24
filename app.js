@@ -75,6 +75,10 @@ function getStatus(task) {
   if (task.type === 'freeform') {
     return { due: false, next: null };
   }
+  if (task.type === 'daily') {
+    const doneToday = task.completions.includes(today);
+    return { due: false, next: doneToday ? addInterval(today, { value: 1, unit: 'day' }) : today };
+  }
   if (task.type === 'fixed') {
     const recent = mostRecentScheduled(task.weekdays, today);
     const last = task.completions.length ? task.completions[task.completions.length - 1] : null;
@@ -93,6 +97,7 @@ function getStatus(task) {
 
 function scheduleLabel(task) {
   if (task.type === 'freeform') return 'As needed';
+  if (task.type === 'daily') return 'Daily';
   if (task.type === 'fixed') {
     if (task.weekdays.length === 7) return 'Every day';
     return 'Every ' + task.weekdays.map(w => WEEKDAY_NAMES[w]).join(', ');
@@ -103,6 +108,9 @@ function scheduleLabel(task) {
 }
 
 function metaLabel(task, status) {
+  if (task.type === 'daily') {
+    return task.completions.includes(todayStr()) ? 'Done today' : 'Not yet today';
+  }
   if (task.type === 'freeform') {
     if (!task.completions.length) return 'Not logged yet';
     return `Last ${formatDateHuman(task.completions[task.completions.length - 1])}`;
@@ -150,7 +158,7 @@ const EMOJI_RULES = [
   [['cat', 'litter'], '🐈'],
   [['pet', 'feed'], '🐾'],
   [['sleep', 'bed'], '🛏️'],
-  [['skincare', 'skin'], '🧴'],
+  [['sunscreen', 'spf', 'skincare', 'skin'], '🧴'],
   [['vitamin', 'medicat', 'pill'], '💊'],
   [['email', 'inbox'], '📧'],
   [['call', 'phone'], '📞'],
@@ -235,7 +243,43 @@ function setArchived(taskId, archived) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
   t.archived = archived;
+  if (t.type === 'daily') {
+    const periods = t.dailyPeriods = t.dailyPeriods || [];
+    if (archived) periods.forEach(p => { if (!p.to) p.to = todayStr(); });
+    else periods.push({ from: todayStr(), to: null });
+  }
   mutate(() => {});
+}
+
+// ---------- dailies ----------
+function dailiesOn(dateStr) {
+  return state.tasks
+    .filter(t => t.type === 'daily')
+    .filter(t => (t.dailyPeriods || []).some(p => p.from <= dateStr && (!p.to || dateStr < p.to)) || t.completions.includes(dateStr))
+    .map(t => ({ task: t, done: t.completions.includes(dateStr) }));
+}
+
+function dailiesProgress(dateStr) {
+  const list = dailiesOn(dateStr);
+  return { list, total: list.length, done: list.filter(x => x.done).length };
+}
+
+function dailiesStreak() {
+  const d = parseISO(todayStr());
+  let streak = 0;
+  const p0 = dailiesProgress(toISODate(d));
+  if (p0.total > 0 && p0.done === p0.total) streak++;
+  for (let i = 0; i < 3650; i++) {
+    d.setDate(d.getDate() - 1);
+    const p = dailiesProgress(toISODate(d));
+    if (p.total === 0 || p.done < p.total) break;
+    streak++;
+  }
+  return streak;
+}
+
+function dailyDotOpacity(p) {
+  return p.done === p.total ? 1 : 0.2 + 0.5 * (p.done / p.total);
 }
 
 function isSnoozed(task) {
@@ -288,7 +332,7 @@ const LONG_PRESS_MS = 500;
 function attachSwipeToArchive(wrapper, cardEl, task) {
   let startX = 0, startY = 0, baseX = 0, dragging = false, decided = false, isHorizontal = false;
   let longPressTimer = null, longPressFired = false;
-  const canSnooze = task.type !== 'freeform';
+  const canSnooze = task.type !== 'freeform' && task.type !== 'daily';
 
   function clearLongPress() {
     if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
@@ -439,8 +483,53 @@ function taskCard(task, status) {
   return wrapper;
 }
 
+function buildDailiesRow() {
+  const p = dailiesProgress(todayStr());
+  if (!p.total) return null;
+  const streak = dailiesStreak();
+  const chip = streak > 0 ? `<span class="streak">🔥 ${streak}</span>` : '';
+  const el = document.createElement('div');
+  if (p.done === p.total) {
+    el.className = 'dailies-slim';
+    el.innerHTML = `<span>☀️ Dailies done ✓</span>${chip}`;
+  } else {
+    el.className = 'dailies-card';
+    const segs = Array.from({ length: p.total }, (_, i) => `<div class="seg-pill${i < p.done ? ' on' : ''}"></div>`).join('');
+    el.innerHTML = `<div class="d-top"><span class="d-title">☀️ Dailies</span>${chip}</div><div class="segs">${segs}</div><div class="d-sub"><span>${p.done} of ${p.total}</span><span>›</span></div>`;
+  }
+  el.addEventListener('click', openDailiesSheet);
+  return el;
+}
+
+function openDailiesSheet() {
+  const today = todayStr();
+  function render() {
+    const p = dailiesProgress(today);
+    if (!p.total) { closeModal(); return; }
+    const streak = dailiesStreak();
+    openModal(`
+      <h2 id="dailies-sheet">☀️ Dailies</h2>
+      <p class="dailies-sub">${streak > 0 ? `🔥 ${streak}-day streak · ` : ''}${p.done === p.total ? 'All done!' : `${p.done} of ${p.total} today`}</p>
+      ${p.list.map(({ task, done }) => `<div class="daily-row${done ? ' on' : ''}" data-id="${task.id}"><div class="chk">${done ? '✓' : ''}</div><span class="lbl">${task.emoji ? task.emoji + ' ' : ''}${task.title}</span></div>`).join('')}
+    `);
+    modalEl.querySelectorAll('.daily-row').forEach(row => row.addEventListener('click', () => {
+      const t = state.tasks.find(x => x.id === row.dataset.id);
+      if (!t) return;
+      t.completions.includes(today) ? unmarkDone(t.id) : markDone(t.id);
+      render();
+      setTimeout(() => {
+        const q = dailiesProgress(today);
+        if (q.total && q.done === q.total && document.getElementById('dailies-sheet')) closeModal();
+      }, 700);
+    }));
+  }
+  render();
+}
+
 function renderDue() {
   viewEl.innerHTML = '';
+  const dailiesRow = buildDailiesRow();
+  if (dailiesRow) viewEl.appendChild(dailiesRow);
   const due = state.tasks
     .filter(t => !t.archived && !isSnoozed(t))
     .map(t => ({ t, status: getStatus(t) }))
@@ -524,6 +613,7 @@ function renderStats() {
   const cutoff = toISODate(new Date(Date.now() - state.statsPeriod * 86400000));
   const counts = {};
   state.tasks.forEach(t => {
+    if (t.type === 'daily') return;
     const tags = t.tags.length ? t.tags : ['untagged'];
     const n = t.completions.filter(c => c >= cutoff).length;
     if (!n) return;
@@ -532,7 +622,8 @@ function renderStats() {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   if (!entries.length) {
-    viewEl.appendChild(emptyState('No activity in this period', 'Complete a few things to see stats here.'));
+    const anyDaily = state.tasks.some(t => t.type === 'daily' && t.completions.some(c => c >= cutoff));
+    if (!anyDaily) viewEl.appendChild(emptyState('No activity in this period', 'Complete a few things to see stats here.'));
     return;
   }
   entries.forEach(([tag, count]) => {
@@ -549,6 +640,7 @@ function renderStats() {
 function completionsForDate(dateStr, tagFilter) {
   const items = [];
   state.tasks.forEach(t => {
+    if (t.type === 'daily') return;
     const tags = t.tags.length ? t.tags : ['untagged'];
     if (tagFilter && !tags.includes(tagFilter)) return;
     if (t.completions.includes(dateStr)) items.push({ task: t, tags });
@@ -556,15 +648,25 @@ function completionsForDate(dateStr, tagFilter) {
   return items;
 }
 
+function dailiesForOverview(dateStr, tagFilter) {
+  if (tagFilter) return null;
+  const p = dailiesProgress(dateStr);
+  return p.done > 0 ? p : null;
+}
+
 function popoverHTML(dateStr, tagFilter) {
   const items = completionsForDate(dateStr, tagFilter);
-  if (!items.length) return '';
+  const dp = dailiesForOverview(dateStr, tagFilter);
+  if (!items.length && !dp) return '';
+  const dailyRows = dp ? `<div class="daily-head">☀️ Dailies · ${dp.done} of ${dp.total}</div>` + dp.list.map(({ task, done }) =>
+    `<div class="item${done ? '' : ' missed'}" data-task-id="${task.id}"><span class="swatch daily-swatch"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}<span class="mark">${done ? '✓' : '–'}</span></div>`
+  ).join('') : '';
   const rows = items.map(({ task, tags }) => {
     const color = colorFor(tagFilter || tags[0]);
     const tagLabel = tagFilter ? '' : ` <span style="opacity:0.5;font-weight:600">· ${tags[0]}</span>`;
     return `<div class="item" data-task-id="${task.id}"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}</div>`;
   }).join('');
-  return `<div class="popover"><div class="date">${formatDateHuman(dateStr)}</div>${rows}</div>`;
+  return `<div class="popover"><div class="date">${formatDateHuman(dateStr)}</div>${dailyRows}${rows}</div>`;
 }
 
 function wirePopoverClicks(container) {
@@ -631,8 +733,12 @@ function buildCalendarSection(tagFilter, monthsBack, tappedDate, onNav, onTapDay
     const items = completionsForDate(dateStr, tagFilter);
     const el = document.createElement('div');
     el.className = 'cal-day' + (dateStr === today ? ' today' : '') + (dateStr === tappedDate ? ' tapped' : '');
-    el.innerHTML = `${dnum}` + (items.length ? `<div class="dots">${items.slice(0, 4).map(({ tags }) => `<span class="dot" style="background:${colorFor(tagFilter || tags[0])}"></span>`).join('')}</div>` : '');
-    if (items.length) el.addEventListener('click', () => onTapDay(dateStr));
+    const dp = dailiesForOverview(dateStr, tagFilter);
+    const dotList = (dp ? [`<span class="dot daily-dot" style="opacity:${dailyDotOpacity(dp)}"></span>`] : [])
+      .concat(items.map(({ tags }) => `<span class="dot" style="background:${colorFor(tagFilter || tags[0])}"></span>`))
+      .slice(0, 4);
+    el.innerHTML = `${dnum}` + (dotList.length ? `<div class="dots">${dotList.join('')}</div>` : '');
+    if (dotList.length) el.addEventListener('click', () => onTapDay(dateStr));
     grid.appendChild(el);
   }
   card.appendChild(grid);
@@ -679,9 +785,11 @@ function buildBarSection(tagFilter, weeksBack, tappedDate, onNav, onTapDay) {
     const items = completionsForDate(dateStr, tagFilter);
     const col = document.createElement('div');
     col.className = 'bar-col';
+    const dp = dailiesForOverview(dateStr, tagFilter);
+    const hasBars = items.length > 0 || !!dp;
     const stack = document.createElement('div');
-    stack.className = 'bar-stack' + (items.length ? ' has-bars' : '') + (dateStr === tappedDate ? ' tapped-bar' : '');
-    stack.style.height = (items.length * 24) + 'px';
+    stack.className = 'bar-stack' + (hasBars ? ' has-bars' : '') + (dateStr === tappedDate ? ' tapped-bar' : '');
+    stack.style.height = (items.length * 24 + (dp ? 8 : 0)) + 'px';
     items.forEach(({ tags }) => {
       const seg = document.createElement('div');
       seg.className = 'bar-seg';
@@ -689,7 +797,14 @@ function buildBarSection(tagFilter, weeksBack, tappedDate, onNav, onTapDay) {
       seg.style.background = colorFor(tagFilter || tags[0]);
       stack.appendChild(seg);
     });
-    if (items.length) stack.addEventListener('click', () => onTapDay(dateStr));
+    if (dp) {
+      const seg = document.createElement('div');
+      seg.className = 'bar-seg daily-seg';
+      seg.style.height = '8px';
+      seg.style.opacity = dailyDotOpacity(dp);
+      stack.appendChild(seg);
+    }
+    if (hasBars) stack.addEventListener('click', () => onTapDay(dateStr));
     const dow = document.createElement('span');
     dow.className = 'bar-dow' + (dateStr === today ? ' today' : '');
     dow.textContent = WEEKDAY_LABELS[i];
@@ -712,7 +827,7 @@ function openTagDetail(tag) {
   let tapped = null;
 
   function renderBody() {
-    const tasksWithTag = state.tasks.filter(t => (t.tags.length ? t.tags : ['untagged']).includes(tag));
+    const tasksWithTag = state.tasks.filter(t => t.type !== 'daily' && (t.tags.length ? t.tags : ['untagged']).includes(tag));
     const ranked = tasksWithTag
       .map(t => ({ t, count: t.completions.length }))
       .filter(x => x.count > 0)
@@ -792,6 +907,7 @@ function openForm(taskId) {
         <button type="button" data-val="floating" class="${type === 'floating' ? 'active' : ''}">Floating</button>
         <button type="button" data-val="fixed" class="${type === 'fixed' ? 'active' : ''}">Fixed days</button>
         <button type="button" data-val="freeform" class="${type === 'freeform' ? 'active' : ''}">As needed</button>
+        <button type="button" data-val="daily" class="${type === 'daily' ? 'active' : ''}">Daily</button>
       </div>
     </div>
     <div id="f-floating" class="field" style="${type === 'floating' ? '' : 'display:none'}">
@@ -808,6 +924,9 @@ function openForm(taskId) {
     </div>
     <div id="f-freeform" class="field" style="${type === 'freeform' ? '' : 'display:none'}">
       <p style="font-size:12px;opacity:0.6;font-weight:600;margin:0">No due date and no reminders — it just sits in "All" and logs each time you mark it done. Useful for things like crafts that you want to track but don't do on a real schedule.</p>
+    </div>
+    <div id="f-daily" class="field" style="${type === 'daily' ? '' : 'display:none'}">
+      <p style="font-size:12px;opacity:0.6;font-weight:600;margin:0">Part of your Dailies checklist. Resets every day, never shows as overdue, and earns one calendar dot once you finish the whole set.</p>
     </div>
     <div id="f-fixed" class="field" style="${type === 'fixed' ? '' : 'display:none'}">
       <label>Repeats on</label>
@@ -828,6 +947,7 @@ function openForm(taskId) {
     document.getElementById('f-floating').style.display = b.dataset.val === 'floating' ? '' : 'none';
     document.getElementById('f-fixed').style.display = b.dataset.val === 'fixed' ? '' : 'none';
     document.getElementById('f-freeform').style.display = b.dataset.val === 'freeform' ? '' : 'none';
+    document.getElementById('f-daily').style.display = b.dataset.val === 'daily' ? '' : 'none';
   });
 
   document.getElementById('f-weekdays').addEventListener('click', (e) => {
@@ -854,7 +974,13 @@ function openForm(taskId) {
       editing.title = title;
       editing.emoji = emoji;
       editing.tags = tags;
+      const wasDaily = editing.type === 'daily';
       editing.type = selType;
+      if (selType === 'daily' && !wasDaily && !editing.archived) {
+        editing.dailyPeriods = (editing.dailyPeriods || []).concat([{ from: todayStr(), to: null }]);
+      } else if (selType !== 'daily' && wasDaily) {
+        (editing.dailyPeriods || []).forEach(p => { if (!p.to) p.to = todayStr(); });
+      }
       editing.interval = { value: intervalValue, unit: intervalUnit };
       editing.weekdays = weekdays;
     } else {
@@ -862,6 +988,7 @@ function openForm(taskId) {
         id: uid(), title, emoji, tags, type: selType,
         interval: { value: intervalValue, unit: intervalUnit },
         weekdays, completions: [], createdAt: todayStr(), archived: false,
+        dailyPeriods: selType === 'daily' ? [{ from: todayStr(), to: null }] : [],
       });
     }
     closeModal();

@@ -212,6 +212,7 @@ function markDone(taskId) {
     t.completions.push(today);
     t.completions.sort();
     t.prevPin = null;
+    t.prevNote = null;
     if (t.pin) {
       if (t.type === 'freeform') {
         if (t.pin === 'queued') t.pin = 'progress';
@@ -219,6 +220,11 @@ function markDone(taskId) {
         t.prevPin = t.pin;
         t.pin = null;
       }
+    }
+    if (t.note) {
+      (t.completionNotes = t.completionNotes || {})[today] = t.note;
+      t.prevNote = t.note;
+      t.note = '';
     }
   }
   mutate(() => {});
@@ -230,7 +236,37 @@ function unmarkDone(taskId) {
   const today = todayStr();
   if (t.prevPin && t.completions.includes(today)) t.pin = t.prevPin;
   t.prevPin = null;
+  if (t.prevNote && completionNote(t, today) === t.prevNote) {
+    if (!t.note) t.note = t.prevNote;
+    delete t.completionNotes[today];
+  }
+  t.prevNote = null;
   t.completions = t.completions.filter(c => c !== today);
+  mutate(() => {});
+}
+
+// ---------- notes (for the next occurrence, stamped onto history when done) ----------
+function notesAllowed(task) {
+  return task.type !== 'daily' && !task.archived;
+}
+
+function completionNote(task, dateStr) {
+  return (task.completionNotes || {})[dateStr] || '';
+}
+
+function setNote(taskId, text) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.note = text;
+  mutate(() => {});
+}
+
+function setCompletionNote(taskId, dateStr, text) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  const notes = t.completionNotes = t.completionNotes || {};
+  if (text) notes[dateStr] = text;
+  else delete notes[dateStr];
   mutate(() => {});
 }
 
@@ -257,12 +293,17 @@ function deleteCompletion(taskId, dateStr) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
   t.completions = t.completions.filter(c => c !== dateStr);
+  if (t.completionNotes) delete t.completionNotes[dateStr];
   mutate(() => {});
 }
 
 function editCompletionDate(taskId, oldDate, newDate) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
+  if (oldDate !== newDate && completionNote(t, oldDate)) {
+    t.completionNotes[newDate] = t.completionNotes[oldDate];
+    delete t.completionNotes[oldDate];
+  }
   t.completions = t.completions.filter(c => c !== oldDate && c !== newDate);
   t.completions.push(newDate);
   t.completions.sort();
@@ -473,6 +514,12 @@ function taskCard(task, status) {
   meta.textContent = task.archived ? 'Archived · ' + scheduleLabel(task) : metaLabel(task, status) + ' · ' + scheduleLabel(task);
   body.appendChild(title);
   body.appendChild(meta);
+  if (task.note && notesAllowed(task)) {
+    const note = document.createElement('p');
+    note.className = 'card-note';
+    note.textContent = task.note;
+    body.appendChild(note);
+  }
   if (task.tags.length) {
     const tagRow = document.createElement('div');
     tagRow.className = 'tag-row';
@@ -707,7 +754,9 @@ function popoverHTML(dateStr, tagFilter) {
   const rows = items.map(({ task, tags }) => {
     const color = colorFor(tagFilter || tags[0]);
     const tagLabel = tagFilter ? '' : ` <span style="opacity:0.5;font-weight:600">· ${tags[0]}</span>`;
-    return `<div class="item" data-task-id="${task.id}"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}</div>`;
+    const note = completionNote(task, dateStr);
+    const noteLine = note ? `<span class="item-note">${escapeAttr(note)}</span>` : '';
+    return `<div class="item${note ? ' has-note' : ''}" data-task-id="${task.id}"><span class="swatch" style="background:${color}"></span>${task.emoji ? task.emoji + ' ' : ''}${task.title}${tagLabel}${noteLine}</div>`;
   }).join('');
   return `<div class="popover"><div class="date">${formatDateHuman(dateStr)}</div>${dailyRows}${rows}</div>`;
 }
@@ -1150,7 +1199,8 @@ function buildDatePickerCalendar(monthsForward, minDateStr, onNav, onPick) {
 
 function pinOptionsHTML(task) {
   const opt = (action, label, when, cls) => `<button class="snooze-option ${cls || ''}" data-pin-action="${action}"><span>${label}</span><span class="when">${when}</span></button>`;
-  if (!task.pin) return opt('queue', 'Queue it', 'for later', 'q') + opt('progress', 'Mark in progress', "I'm on it now", 'ip');
+  const half = (action, label, cls) => `<button class="snooze-option half ${cls}" data-pin-action="${action}">${label}</button>`;
+  if (!task.pin) return `<div class="sheet-pin-row">${half('queue', 'Queue it', 'q')}${half('progress', 'In progress', 'ip')}</div>`;
   if (task.pin === 'queued') return opt('progress', 'Mark in progress', 'moves up', 'ip') + opt('unpin', 'Unqueue', 'drop the pin');
   return opt('finish', 'Finished', 'clears the pin', 'fin') + opt('back', 'Back to queue', 'paused', 'q') + opt('unpin', 'Unpin', 'drop it');
 }
@@ -1172,23 +1222,24 @@ function openCardSheet(task) {
   let monthsForward = 0;
 
   function render() {
-    const head = `<h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>`;
+    const head = taskHeadHTML(task);
     if (!showCustom) {
-      const sub = task.pin === 'progress' ? 'In progress' : task.pin === 'queued' ? 'Queued' : (scheduled ? 'Pin it, or snooze it out of Due' : 'Pin it to Due');
+      const sub = task.pin === 'progress' ? 'In progress' : task.pin === 'queued' ? 'Queued' : (scheduled ? 'Pin it, snooze it, or leave a note' : 'Pin it or leave a note');
+      const chip = (date, label) => `<button class="snooze-chip" data-date="${date}">${label}<span class="d">${formatDateHuman(date)}</span></button>`;
       const snoozeBlock = scheduled && !task.pin ? `
-        <p class="section-label" style="margin:16px 0 8px">Snooze until</p>
-        <button class="snooze-option" data-date="${tomorrow}"><span>Tomorrow</span><span class="when">${formatDateHuman(tomorrow)}</span></button>
-        <button class="snooze-option" data-date="${weekend}"><span>This weekend</span><span class="when">${formatDateHuman(weekend)}</span></button>
-        <button class="snooze-option" data-date="${nextWeek}"><span>Next week</span><span class="when">${formatDateHuman(nextWeek)}</span></button>
-        <button class="snooze-option custom" id="snooze-custom"><span>Pick a date…</span><span class="when">📅</span></button>` : '';
-      openModal(`${head}<p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">${sub}</p>${pinOptionsHTML(task)}${snoozeBlock}`);
+        <p class="section-label sheet-label">Snooze until</p>
+        <div class="snooze-chips">${chip(tomorrow, 'Tomorrow')}${chip(weekend, 'Weekend')}${chip(nextWeek, 'Next wk')}<button class="snooze-chip custom" id="snooze-custom">📅</button></div>` : '';
+      const noteRow = task.note
+        ? `<button class="note-row" id="note-row"><span>📝 Edit note</span><span class="preview">${escapeAttr(task.note)}</span></button>`
+        : '<button class="note-row" id="note-row"><span>📝 Add a note…</span></button>';
+      openModal(`${head}<p class="sheet-sub">${sub}</p>${pinOptionsHTML(task)}${snoozeBlock}${noteRow}`);
       modalEl.querySelectorAll('[data-pin-action]').forEach(btn => {
         btn.addEventListener('click', () => {
           applyPinAction(task, btn.dataset.pinAction);
           closeModal();
         });
       });
-      modalEl.querySelectorAll('.snooze-option[data-date]').forEach(btn => {
+      modalEl.querySelectorAll('.snooze-chip[data-date]').forEach(btn => {
         btn.addEventListener('click', () => {
           setSnooze(task.id, btn.dataset.date);
           closeModal();
@@ -1196,8 +1247,14 @@ function openCardSheet(task) {
       });
       const custom = document.getElementById('snooze-custom');
       if (custom) custom.addEventListener('click', () => { showCustom = true; render(); });
+      document.getElementById('note-row').addEventListener('click', () => {
+        openNoteEditor(task, NEXT_NOTE_SUB, task.note, (text) => {
+          setNote(task.id, text);
+          closeModal();
+        });
+      });
     } else {
-      openModal(`${head}<p style="font-size:13px;font-weight:600;opacity:0.6;margin-top:-8px">Pick a date to snooze until</p><div id="snooze-cal-slot"></div>`);
+      openModal(`${head}<p class="sheet-sub">Pick a date to snooze until</p><div id="snooze-cal-slot"></div>`);
       document.getElementById('snooze-cal-slot').appendChild(
         buildDatePickerCalendar(monthsForward, tomorrow,
           (offset) => { monthsForward = offset; render(); },
@@ -1210,6 +1267,23 @@ function openCardSheet(task) {
   render();
 }
 
+function taskHeadHTML(task) {
+  return `<h2>${task.emoji ? task.emoji + ' ' : ''}${task.title}</h2>`;
+}
+
+const NEXT_NOTE_SUB = 'A note for this one. It clears when you mark it done.';
+
+function openNoteEditor(task, sub, value, onSave) {
+  openModal(`${taskHeadHTML(task)}<p class="sheet-sub">${sub}</p>
+    <textarea class="note-input" id="note-input" rows="3"></textarea>
+    <button class="btn-primary note-save" id="note-save">Save note</button>`);
+  const input = document.getElementById('note-input');
+  input.value = value || '';
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  document.getElementById('note-save').addEventListener('click', () => onSave(input.value.trim()));
+}
+
 function openDetail(taskId) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
@@ -1219,9 +1293,11 @@ function openDetail(taskId) {
   for (let i = 1; i < t.completions.length; i++) gaps.push(diffDays(t.completions[i - 1], t.completions[i]));
   const avg = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : null;
 
+  const canNote = notesAllowed(t);
   openModal(`
-    <h2>${t.emoji ? t.emoji + ' ' : ''}${t.title}</h2>
+    ${taskHeadHTML(t)}
     ${t.tags.length ? `<div class="tag-row">${t.tags.map(tag => `<span class="tag-chip" style="background:${colorFor(tag)}">${tag}</span>`).join('')}</div>` : ''}
+    ${canNote && t.note ? `<div class="detail-note">📝 ${escapeAttr(t.note)}</div>` : ''}
     <div class="detail-stat-row">
       <div class="stat-box"><div class="num">${t.completions.length ? formatDateHuman(t.completions[t.completions.length - 1]) : '—'}</div><div class="lab">Last done</div></div>
       <div class="stat-box"><div class="num">${scheduleLabel(t)}</div><div class="lab">Schedule</div></div>
@@ -1230,14 +1306,20 @@ function openDetail(taskId) {
     ${t.archived ? '' : `<button class="btn-primary" id="d-done">${t.completions.includes(todayStr()) ? 'Marked done today ✓' : 'Mark done'}</button>`}
     <button class="btn-secondary" id="d-edit">Edit</button>
     ${pinRowHTML(t)}
+    ${canNote ? `<button class="btn-secondary" id="d-note">${t.note ? 'Edit note' : 'Add note'}</button>` : ''}
     ${t.archived
       ? '<button class="btn-primary" id="d-unarchive">Unarchive</button>'
       : '<button class="btn-secondary" id="d-archive">Archive</button>'}
     <p class="section-label" style="margin-top:16px">History (${t.completions.length})</p>
     <div class="history-list">
-      ${completions.length ? completions.map(c => `
-        <div class="history-item"><input type="date" class="history-date-input" value="${c}" data-date="${c}"><button data-date="${c}">✕</button></div>
-      `).join('') : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
+      ${completions.length ? completions.map(c => {
+        const note = completionNote(t, c);
+        return `
+        <div class="history-item">
+          <div class="history-main"><input type="date" class="history-date-input" value="${c}" data-date="${c}">${note ? `<p class="history-note">${escapeAttr(note)}</p>` : ''}</div>
+          <div class="history-actions">${t.type === 'daily' ? '' : `<button data-note-date="${c}" aria-label="Note">📝</button>`}<button data-date="${c}" aria-label="Delete">✕</button></div>
+        </div>`;
+      }).join('') : '<p style="opacity:0.5;font-weight:600;font-size:14px">No completions logged yet.</p>'}
     </div>
   `);
 
@@ -1259,10 +1341,27 @@ function openDetail(taskId) {
     setArchived(t.id, !t.archived);
     closeModal();
   });
-  modalEl.querySelectorAll('.history-item button').forEach(btn => {
+  if (canNote) {
+    document.getElementById('d-note').addEventListener('click', () => {
+      openNoteEditor(t, NEXT_NOTE_SUB, t.note, (text) => {
+        setNote(t.id, text);
+        openDetail(t.id);
+      });
+    });
+  }
+  modalEl.querySelectorAll('.history-item button[data-date]').forEach(btn => {
     btn.addEventListener('click', () => {
       deleteCompletion(t.id, btn.dataset.date);
       openDetail(t.id);
+    });
+  });
+  modalEl.querySelectorAll('.history-item button[data-note-date]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const date = btn.dataset.noteDate;
+      openNoteEditor(t, `A note for ${formatDateHuman(date)}.`, completionNote(t, date), (text) => {
+        setCompletionNote(t.id, date, text);
+        openDetail(t.id);
+      });
     });
   });
   modalEl.querySelectorAll('.history-date-input').forEach(input => {
